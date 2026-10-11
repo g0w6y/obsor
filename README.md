@@ -3,12 +3,12 @@
 </h1>
 
 <p align="center">
-  <b>Advanced multi-layer Python obfuscation framework</b><br>
-  AES-256 encryption · 23+ techniques · Preset profiles · Executable builder
+  <b>Multi-layer Python obfuscation / packing toolkit</b><br>
+  23 encode &amp; cipher techniques · Preset profiles · Executable builder · PRO external-key mode
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.7%2B-blue?style=flat-square&logo=python&logoColor=white">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white">
   <img src="https://img.shields.io/github/license/g0w6y/obsor?style=flat-square&color=green">
   <img src="https://img.shields.io/github/stars/g0w6y/obsor?style=flat-square&color=yellow">
   <img src="https://img.shields.io/github/last-commit/g0w6y/obsor?style=flat-square&color=blue">
@@ -19,9 +19,12 @@
 
 ## What is Obsor?
 
-Obsor is an open-source Python code obfuscation framework that makes your source code extremely difficult to reverse-engineer — while keeping it fully functional at runtime.
+Obsor is an open-source Python obfuscation / packing toolkit with two engines:
 
-It supports **23+ obfuscation and encryption techniques**, preset protection profiles, standalone executable building, and built-in self-testing.
+- **Classic (`main.py`)** — layers 23 encoding and cipher techniques to deter *casual* copying. Be clear-eyed about what this is: **obfuscation, not a security boundary.** The layers unwrap themselves at runtime, and for the cipher methods the key is embedded in the output, so a single hook recovers the source. Good for raising the bar against copy-paste and lazy scanners; not protection against anyone who can run the file.
+- **PRO (`pro/`)** — a real external-key boundary: the key is never stored (re-derived at runtime via scrypt), the payload is authenticated with AES-256-GCM, identifiers are randomized per build, and a native C loader defeats the classic one-line hook. Read [`pro/README.md`](pro/README.md) for exactly what it does and does not protect — including honest, measured limits against a key-holding attacker.
+
+It also includes preset profiles, standalone executable building, and built-in self-testing.
 
 ---
 
@@ -50,15 +53,20 @@ It supports **23+ obfuscation and encryption techniques**, preset protection pro
 ```bash
 git clone https://github.com/g0w6y/obsor
 cd obsor
+python3 -m venv .venv && source .venv/bin/activate   # recommended
 pip install -r requirements.txt
 ```
 
-**Requirements:** Python 3.7+
+On macOS/many Linux distros the interpreter is `python3` (and `pip3`); on a
+system-managed Python you need the venv above to avoid `externally-managed-environment`.
+The examples below use `python` — read it as whatever runs your interpreter.
 
-Optional dependencies:
-- `pycryptodome` — required for AES-256
-- `pyinstaller` — required for executable building
-- `colorama` — colored terminal output
+**Requirements:** Python 3.10+ (PRO uses `X | None` type hints; the `uu` method needs < 3.13; PRO native needs a C compiler + OpenSSL)
+
+Dependencies (`requirements.txt`):
+- `pycryptodome` — required for the classic `aes` method and all of PRO
+- `colorama` — colored terminal output (degrades gracefully if absent)
+- `pyinstaller` — only for `--build-exe`
 
 ---
 
@@ -84,9 +92,9 @@ python main.py -i script.py --preset military --build-exe
 
 | Preset | Pipeline | Use Case |
 |---|---|---|
-| `military` | `minify → aes → zlib → base85 → split → reverse → marshal → vigenere` | Maximum protection |
-| `max` | `minify → aes → marshal → bz2 → base64 → xor → whitespace → rc4` | Heavy multi-layer |
-| `stealth` | `whitespace → split → charcode → hex → url` | Evade static analysis |
+| `military` | `minify → aes → zlib → base85 → split → reverse → marshal → vigenere` | Heaviest layering (still reversible with one hook — not real protection; use `pro/` for a key boundary) |
+| `max` | `minify → aes → marshal → bz2 → base64 → xor → whitespace → rc4` | Heavy layering (reversible) |
+| `stealth` | `whitespace → split → charcode → hex → url` | Bulk encodings to slow static scanners |
 | `light` | `base64 → reverse` | Quick / lightweight |
 
 ```bash
@@ -102,7 +110,7 @@ python main.py -i script.py --preset light
 ```
 python main.py [-h]
     -i INPUT                     Input Python script
-    [-o OUTPUT]                  Output file (default: obfuscated_<input>)
+    [-o OUTPUT]                  Output file (default: obfuscated.py)
     [-m METHODS]                 Comma-separated methods (e.g. aes,base64,zlib)
     [--preset {military,max,light,stealth}]
     [-k KEY]                     Custom key for supported methods
@@ -133,7 +141,7 @@ python main.py -i examples/sample_input.py -m aes,base85 -k "MySecretKey123"
 python main.py -i examples/sample_input.py --preset max --build-exe --save-keys
 ```
 
-The file `obsor.py` in the root is `main.py` obfuscated with the `military` preset — a live demo of what Obsor produces.
+The file `obsor.py` in the root is a sample of what Obsor produces (an earlier `main.py` run through the `military` preset).
 
 ---
 
@@ -141,11 +149,20 @@ The file `obsor.py` in the root is `main.py` obfuscated with the `military` pres
 
 ```
 obsor/
-├── main.py               # Main obfuscation engine
-├── obsor.py              # main.py obfuscated (military preset demo)
+├── main.py               # Classic obfuscation engine + CLI
+├── obsor.py              # sample obfuscated output (military preset demo)
+├── pro/                  # PRO engine (external-key, native loader)
+│   ├── cli.py            # python -m pro.cli
+│   ├── engine.py         # hardened tier
+│   ├── keyderive.py      # scrypt key derivation (key never stored)
+│   ├── guard.py          # optional anti-tamper tripwire
+│   ├── selftest.py       # python -m pro.selftest
+│   ├── native/           # native + native-logic tiers (C loader)
+│   └── README.md         # PRO docs + honest threat model
 ├── examples/
-│   ├── sample_input.py   # Sample script for testing
-│   └── README.md         # Example usage guide
+│   ├── sample_input.py   # sample script for testing
+│   ├── native_logic/     # native-logic tier example (secret.c + app.py)
+│   └── README.md         # example usage guide
 ├── requirements.txt
 ├── README.md
 ├── LICENSE               # Apache 2.0
@@ -156,10 +173,12 @@ obsor/
 
 ## Cross-Platform Notes
 
-- Windows, macOS, and Linux all supported
-- Generated executables are OS-specific (build on the target OS)
+- Classic and PRO **hardened** run anywhere Python does (Windows, macOS, Linux)
+- PRO **native** / **native-logic** build on macOS and Linux only (clang + OpenSSL); no Windows/MSVC path yet
+- The PRO native `.so` is bound to the build host's CPython minor version and its OpenSSL — build and run on a matching machine
+- Generated executables (`--build-exe`) are OS-specific (build on the target OS)
 - `marshal` output is Python version-dependent — obfuscate and run on the same Python version
-- AES requires `pycryptodome` on the machine running the obfuscated script
+- AES (classic `aes` and all PRO) requires `pycryptodome` on the machine running the output
 
 ---
 

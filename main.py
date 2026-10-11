@@ -4,8 +4,6 @@ import sys
 import base64
 import zlib
 import bz2
-import uu
-import io
 import random
 import argparse
 import threading
@@ -13,8 +11,16 @@ import time
 import marshal
 import subprocess
 import string
+import io
 from pathlib import Path
-from colorama import Fore, init
+
+try:
+    from colorama import Fore, init
+except ImportError:  # colorama is optional; degrade to no-color
+    class _NoColor:
+        def __getattr__(self, _): return ""
+    Fore = _NoColor()
+    def init(*a, **k): pass
 
 try:
     from Crypto.Cipher import AES
@@ -29,6 +35,14 @@ init(autoreset=True)
 AUTHOR = "g0w6y"
 TOOL_NAME = "Obsor"
 VERSION = "2.0"
+
+# Keys generated during a run (for --save-keys). NOTE: in classic mode these
+# keys are ALSO embedded in the output file, so saving them is for your records
+# only, not a security boundary. For keys kept OUT of the file, use PRO mode.
+GENERATED_KEYS = []
+
+def _record_key(label, value):
+    GENERATED_KEYS.append(f"{label}: {value}")
 
 BANNER = r"""
         _                         
@@ -88,6 +102,7 @@ class XORMethod(ObfuscationMethod):
         if key is None:
             key = random.randint(1, 255)
             print(Fore.YELLOW + f"[!] Generated random XOR key: {key}")
+            _record_key("XOR key", key)
         elif isinstance(key, str):
             key = ord(key[0]) if key else random.randint(1, 255)
         elif not isinstance(key, int):
@@ -133,11 +148,11 @@ class WhitespaceMethod(ObfuscationMethod):
     description = "Whitespace (tabs/spaces) encoding"
     @staticmethod
     def apply(code, **kwargs):
-        binary = ''.join(format(ord(c), '08b') for c in code)
+        binary = ''.join(format(b, '08b') for b in code.encode())
         ws = binary.replace('0', ' ').replace('1', '\t')
         return f'''def _ws_decode(s):
     b = ''.join(['0' if c == ' ' else '1' for c in s])
-    return ''.join(chr(int(b[i:i+8], 2)) for i in range(0, len(b), 8))
+    return bytes(int(b[i:i+8], 2) for i in range(0, len(b), 8)).decode()
 exec(compile(_ws_decode({repr(ws)}), '<string>', 'exec'))
 '''
 
@@ -186,6 +201,7 @@ class AESMethod(ObfuscationMethod):
         if key is None:
             key = get_random_bytes(32)
             print(Fore.YELLOW + f"[!] Generated random AES key (base64): {base64.b64encode(key).decode()}")
+            _record_key("AES key (base64)", base64.b64encode(key).decode())
         else:
             from hashlib import sha256
             if isinstance(key, str):
@@ -282,9 +298,14 @@ class CharCodeMethod(ObfuscationMethod):
 
 class UUMethod(ObfuscationMethod):
     name = "uu"
-    description = "UUEncode (Unix-to-Unix encoding)"
+    description = "UUEncode (Unix-to-Unix encoding) [Python < 3.13 only]"
     @staticmethod
     def apply(code, **kwargs):
+        try:
+            import uu
+        except ImportError:
+            raise RuntimeError("the 'uu' method needs the stdlib 'uu' module, "
+                               "removed in Python 3.13+. Use another method.")
         data = code.encode()
         out = io.BytesIO()
         uu.encode(io.BytesIO(data), out, name="data", mode=0o666)
@@ -359,6 +380,7 @@ class VigenereMethod(ObfuscationMethod):
         if keyword is None:
             keyword = ''.join(random.choices(string.ascii_uppercase, k=8))
             print(Fore.YELLOW + f"[!] Generated random Vigenère keyword: {keyword}")
+            _record_key("Vigenere keyword", keyword)
         elif isinstance(keyword, bytes):
             keyword = keyword.decode('latin1')
         elif not isinstance(keyword, str):
@@ -368,9 +390,9 @@ class VigenereMethod(ObfuscationMethod):
         encoded = []
         key_index = 0
         for c in code:
-            if c.isalpha():
+            if 'a' <= c <= 'z' or 'A' <= c <= 'Z':
                 shift = ord(keyword[key_index % len(keyword)]) - ord('A')
-                if c.islower():
+                if 'a' <= c <= 'z':
                     encoded.append(chr((ord(c) - ord('a') + shift) % 26 + ord('a')))
                 else:
                     encoded.append(chr((ord(c) - ord('A') + shift) % 26 + ord('A')))
@@ -383,9 +405,9 @@ def _vigenere_decode(s):
     res = []
     key_index = 0
     for c in s:
-        if c.isalpha():
+        if 'a' <= c <= 'z' or 'A' <= c <= 'Z':
             shift = ord(_keyword[key_index % len(_keyword)]) - ord('A')
-            if c.islower():
+            if 'a' <= c <= 'z':
                 res.append(chr((ord(c) - ord('a') - shift) % 26 + ord('a')))
             else:
                 res.append(chr((ord(c) - ord('A') - shift) % 26 + ord('A')))
@@ -405,6 +427,7 @@ class RC4Method(ObfuscationMethod):
         if key is None:
             key_bytes = bytes([random.randint(0,255) for _ in range(16)])
             print(Fore.YELLOW + f"[!] Generated random RC4 key (base64): {base64.b64encode(key_bytes).decode()}")
+            _record_key("RC4 key (base64)", base64.b64encode(key_bytes).decode())
         elif isinstance(key, str):
             key_bytes = key.encode('latin1')
         else:
@@ -469,10 +492,17 @@ class PolybiusMethod(ObfuscationMethod):
                 encode_map[ch] = f"{r+1}{c+1}"
                 if ch == 'I':
                     encode_map['J'] = f"{r+1}{c+1}"
+        # Case-preserving: digits 1-5 index the square; a leading '6' marks a
+        # lowercase letter. Non-letters (and 'j' -> 'i') pass through literally.
+        # This round-trips real, case-sensitive Python source.
         encoded = []
-        for ch in code.upper():
-            if ch in encode_map:
-                encoded.append(encode_map[ch])
+        for ch in code:
+            up = ch.upper()
+            if ch.isalpha() and up == 'J':
+                encoded.append(('6' if ch.islower() else '') + '70')  # J escape
+            elif up in encode_map and ch.isalpha():
+                prefix = '6' if ch.islower() else ''
+                encoded.append(prefix + encode_map[up])
             else:
                 encoded.append(ch)
         encoded_str = ''.join(encoded)
@@ -485,15 +515,20 @@ class PolybiusMethod(ObfuscationMethod):
     res = []
     i = 0
     while i < len(s):
-        if s[i].isdigit() and i+1 < len(s) and s[i+1].isdigit():
+        lower = False
+        if s[i] == '6' and i+2 < len(s) and s[i+1].isdigit() and s[i+2].isdigit():
+            lower = True
+            i += 1
+        if s[i] == '7' and i+1 < len(s) and s[i+1] == '0':
+            res.append('j' if lower else 'J')
+            i += 2
+        elif s[i].isdigit() and i+1 < len(s) and s[i+1].isdigit() \\
+                and '1' <= s[i] <= '5' and '1' <= s[i+1] <= '5':
             r = int(s[i]) - 1
             c = int(s[i+1]) - 1
-            if 0 <= r < 5 and 0 <= c < 5:
-                res.append(square[r][c])
-                i += 2
-            else:
-                res.append(s[i])
-                i += 1
+            ch = square[r][c]
+            res.append(ch.lower() if lower else ch)
+            i += 2
         else:
             res.append(s[i])
             i += 1
@@ -506,9 +541,9 @@ class OctalMethod(ObfuscationMethod):
     description = "Octal encoding"
     @staticmethod
     def apply(code, **kwargs):
-        octal = ''.join(format(ord(c), '03o') for c in code)
+        octal = ''.join(format(b, '03o') for b in code.encode())
         return f'''def _octal_decode(s):
-    return ''.join(chr(int(s[i:i+3], 8)) for i in range(0, len(s), 3))
+    return bytes(int(s[i:i+3], 8) for i in range(0, len(s), 3)).decode()
 exec(compile(_octal_decode({repr(octal)}), '<string>', 'exec'))
 '''
 
@@ -556,12 +591,8 @@ def apply_layers(original_code, methods, **kwargs):
         if m not in METHODS:
             raise ValueError(f"Unknown method: {m}")
         meth = METHODS[m]
-        if m == 'minify':
-            current = meth.apply(current, **kwargs)
-            applied.append('minify')
-        else:
-            current = meth.apply(current, **kwargs)
-            applied.append(m)
+        current = meth.apply(current, **kwargs)
+        applied.append(m)
     return current, applied
 
 def build_executable(script_path, onefile=True, console=True, icon=None):
@@ -586,13 +617,16 @@ def build_executable(script_path, onefile=True, console=True, icon=None):
 def test_obfuscated(script_path):
     print(Fore.YELLOW + f"\n[🧪] Testing obfuscated script: {script_path}")
     try:
-        res = subprocess.run([sys.executable, script_path], capture_output=True, text=True, timeout=10)
+        res = subprocess.run([sys.executable, script_path], capture_output=True,
+                             text=True, timeout=10, stdin=subprocess.DEVNULL)
         if res.returncode == 0:
             print(Fore.GREEN + "[✔] Test passed: script executed successfully")
             if res.stdout:
-                print(Fore.CYAN + "Output:\n" + res.stdout[:500] + "..." if len(res.stdout) > 500 else res.stdout)
+                print(Fore.CYAN + "Output:\n" + (res.stdout[:500] + "..." if len(res.stdout) > 500 else res.stdout))
         else:
             print(Fore.RED + f"[!] Test failed with return code {res.returncode}")
+            print(Fore.YELLOW + "    (a non-zero exit can also mean the script expects "
+                                "stdin or CLI arguments, which --test does not provide)")
             if res.stderr:
                 print(Fore.RED + "Error:\n" + res.stderr)
     except subprocess.TimeoutExpired:
@@ -686,9 +720,15 @@ def main():
     print(Fore.GREEN + f"\n[✔] Saved to {args.output}")
     print(Fore.CYAN + f"    Layers: {' → '.join(applied)}")
     
+    if args.save_keys:
+        if GENERATED_KEYS:
+            save_keys("\n".join(GENERATED_KEYS) + "\n", args.output)
+        else:
+            print(Fore.YELLOW + "[!] No random keys generated (nothing to save)")
+
     if args.test:
         test_obfuscated(args.output)
-    
+
     if args.build_exe:
         build_executable(args.output, args.exe_onefile, args.exe_console, args.exe_icon)
 
