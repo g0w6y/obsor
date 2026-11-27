@@ -3,8 +3,8 @@
 </h1>
 
 <p align="center">
-  <b>Multi-layer Python obfuscation / packing toolkit</b><br>
-  23 encode &amp; cipher techniques · Preset profiles · Executable builder · PRO external-key mode
+  <b>Multi-layer, multi-language obfuscation / packing toolkit</b><br>
+  Python + JavaScript · 20+ encode &amp; cipher techniques per language · Preset profiles · PRO external-key mode
 </p>
 
 <p align="center">
@@ -19,12 +19,33 @@
 
 ## What is Obsor?
 
-Obsor is an open-source Python obfuscation / packing toolkit with two engines:
+Obsor is an open-source obfuscation / packing toolkit, now spanning two
+languages, each with the same two-engine shape:
 
-- **Classic (`main.py`)** — layers 23 encoding and cipher techniques to deter *casual* copying. Be clear-eyed about what this is: **obfuscation, not a security boundary.** The layers unwrap themselves at runtime, and for the cipher methods the key is embedded in the output, so a single hook recovers the source. Good for raising the bar against copy-paste and lazy scanners; not protection against anyone who can run the file.
-- **PRO (`pro/`)** — a real external-key boundary: the key is never stored (re-derived at runtime via scrypt), the payload is authenticated with AES-256-GCM, identifiers are randomized per build, and a native C loader defeats the classic one-line hook. Read [`pro/README.md`](pro/README.md) for exactly what it does and does not protect — including honest, measured limits against a key-holding attacker.
+- **Classic** — layers 20+ encoding and cipher techniques to deter *casual*
+  copying. Be clear-eyed about what this is: **obfuscation, not a security
+  boundary.** The layers unwrap themselves at runtime, and for the cipher
+  methods the key is embedded in the output, so a single hook recovers the
+  source. Good for raising the bar against copy-paste and lazy scanners; not
+  protection against anyone who can run the file.
+- **PRO** — a real external-key boundary: the key is never stored (re-derived
+  at runtime via scrypt), the payload is authenticated with AES-256-GCM,
+  identifiers are randomized per build, and a native loader defeats the
+  classic one-line hook. Each language's `pro/README.md` documents exactly
+  what it does and does not protect — including honest, measured limits
+  against a key-holding attacker, proven by actually attacking this repo's
+  own output, not estimated.
 
-It also includes preset profiles, standalone executable building, and built-in self-testing.
+| Language | Classic engine | PRO docs |
+|---|---|---|
+| Python | [`main.py`](main.py) (23 methods) | [`pro/README.md`](pro/README.md) |
+| JavaScript / Node | [`js/main.js`](js/main.js) (22 methods) | [`js/pro/README.md`](js/pro/README.md) |
+
+The Python engine also includes preset profiles, standalone executable
+building, and built-in self-testing; see [`js/README.md`](js/README.md) for
+the Node port's equivalents and the one real platform difference (no
+bytecode-only execution path in stock Node — read "Why JS hardened != Python
+hardened" there before assuming parity).
 
 ---
 
@@ -85,6 +106,22 @@ python main.py -i script.py --preset max --test
 # Build a standalone executable
 python main.py -i script.py --preset military --build-exe
 ```
+
+### JavaScript / Node
+
+```bash
+cd js
+node main.js -i script.js -o protected.js -m base64,zlib
+node main.js -i script.js --preset military --test
+
+# PRO: real external-key boundary (no npm dependency needed)
+node pro/cli.js -i script.js -o dist/protected.js --tier hardened -k "my passphrase"
+OBSOR_KEY="my passphrase" node dist/protected.js
+```
+
+See [`js/README.md`](js/README.md) for the full method list and the one
+real platform difference from Python (no bytecode-only execution path in
+stock Node).
 
 ---
 
@@ -163,6 +200,13 @@ obsor/
 │   ├── sample_input.py   # sample script for testing
 │   ├── native_logic/     # native-logic tier example (secret.c + app.py)
 │   └── README.md         # example usage guide
+├── js/                   # JavaScript/Node port -- same two-engine shape
+│   ├── main.js           # Classic engine + CLI (node main.js)
+│   ├── pro/               # PRO engine (external-key, N-API native loader)
+│   │   ├── native/          # native + native-logic tiers (N-API addon)
+│   │   └── README.md        # PRO-JS docs + honest threat model
+│   ├── examples/
+│   └── README.md          # obsor-js docs + Python-vs-Node differences
 ├── requirements.txt
 ├── README.md
 ├── LICENSE               # Apache 2.0
