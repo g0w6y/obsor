@@ -1,6 +1,6 @@
 # Examples
 
-This directory contains sample scripts to test and demonstrate Obsor.
+Sample scripts for exercising Obsor directly.
 
 ## sample_input.py
 

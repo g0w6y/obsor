@@ -3,16 +3,15 @@
 Hardened protection for .NET assemblies, plus a native-logic tier for the
 one routine you actually want to keep out of reach.
 
-> **Honest framing (read this).** No .NET protector is "unbreakable," and
-> neither is this. What PRO buys you is a real **external-key boundary**:
-> someone who has the protected file but NOT the key cannot get your code
-> without attacking the passphrase (Argon2id + AES-256-GCM). That is the
-> whole value. Against someone who **can run the code** -- a licensed
-> customer, or any host that holds the key -- PRO does *not* hide your
-> logic: the payload must become a loaded managed assembly, and that
-> assembly's IL is fully recoverable with no debugger attached (see
-> **Measured resistance** -- these numbers came from actually attacking
-> this repo's own output, not estimated).
+> **Set expectations correctly.** No .NET protector is unbreakable, this one
+> included. What PRO actually delivers is an **external-key boundary**: with
+> the protected file but not the key, an attacker is stuck attacking a
+> passphrase (Argon2id + AES-256-GCM) -- nothing more, nothing less. The
+> moment someone **can run the code** -- a licensed customer, or any host
+> that holds the key -- the logic stops being hidden: the payload has to
+> become a loaded managed assembly, and its IL comes back fully intact with
+> no debugger attached (see **Measured resistance**, which reflects actual
+> attacks against this repo's output, not guesswork).
 
 ## What PRO changes vs classic
 
@@ -57,9 +56,8 @@ OBSOR_LICENSE="TOKEN" dotnet dist/app.dll
 
 ## Measured resistance (this machine, .NET SDK 9.0.321 / net8.0 runtime, 2026-11-27)
 
-Resistance depends entirely on **which attacker** you mean. The numbers
-below were measured by adversarial review against this repo's own output --
-not estimated.
+It all comes down to **which attacker** you have in mind. Every number below
+came from actually attacking this repo's own output, nothing was guessed.
 
 **Attacker has the file but NOT the key** (e.g. a stolen artifact):
 
@@ -90,10 +88,10 @@ realistic IP-piracy threat):
   legitimate runs too (same tradeoff scrypt's `N` parameter has in
   Python/JS).
 - The anti-tamper guard (opt-in, `--guard`) only checks
-  `Debugger.IsAttached` and a timing loop -- it does **not** detect a
-  profiler, ETW trace, or `dotnet-dump`/`dotnet-trace` snapshot, and it runs
-  in-process so a patched launcher bypasses it entirely. Cosmetic, not a
-  boundary.
+  `Debugger.IsAttached` and a timing loop -- it misses a profiler, ETW
+  trace, or `dotnet-dump`/`dotnet-trace` snapshot entirely, and runs
+  in-process, so a patched launcher routes around it with no trouble. Pure
+  cosmetics.
 - `machine` binding uses `Environment.MachineName` + OS platform + core
   count (spoofable, same spirit as Python/JS) and does not survive payload
   extraction.
@@ -103,15 +101,15 @@ realistic IP-piracy threat):
 
 ## Native-logic tier (resists a key-holder)
 
-The hardened tier does **not** hide logic from someone who can run the
-code -- it is reflectable, full stop, regardless of how the decrypt
-happened. The **native-logic tier** does hide the one routine you actually
-care about: write it as plain C, Obsor.Pro compiles it with `clang` into a
+The hardened tier can't hide logic from someone who can run the code --
+it's reflectable, full stop, regardless of how the decrypt happened. The
+**native-logic tier** fixes that for the one routine you actually care
+about: write it as plain C, Obsor.Pro compiles it with `clang` into a
 shared library shipped alongside the launcher, and the payload calls it via
-`[DllImport]`. That function ships as machine code -- there is no IL for
-it, `MethodBase.GetMethodBody()` on the P/Invoke stub returns `null`. A
-key-holder can still *call* it as a black box but must reverse the compiled
-library (Ghidra/IDA) to read the algorithm -- the real bar.
+`[DllImport]`. That function ships as machine code, so there's no IL for it
+-- `MethodBase.GetMethodBody()` on the P/Invoke stub returns `null`. A
+key-holder can still *call* it as a black box, but reading the algorithm
+means reversing the compiled library (Ghidra/IDA) -- the real bar.
 
 ```csharp
 // app.cs
@@ -135,13 +133,14 @@ exported symbol name (same visibility tradeoff as the Python/JS native-logic
 examples) but not the algorithm's constants, which exist only as compiled
 immediate values.
 
-Caveats that keep this honest:
+What keeps this claim honest:
 - Only the code you *write in C* is protected; everything else in the
   payload is recoverable by a key-holder via the `AssemblyLoad` technique
   above. Put just the crown-jewel routine in C.
-- A gate must **return a value the payload needs**, not a bool the C# side
-  can skip -- a black-box boolean is bypassed by not calling it.
-- The compiled library is still reversible with native RE tooling; this
-  raises cost to IDA/Ghidra effort, it is not unbreakable.
+- The gate has to **hand back a value the payload actually consumes** -- a
+  key or a computed result. A plain yes/no boolean can be skipped entirely
+  by never calling it.
+- Native RE tooling can still take the compiled library apart. This raises
+  the effort bar to IDA/Ghidra work; it doesn't close the door.
 - Needs a C compiler (clang/gcc) on PATH at build time; produces a
   platform-specific library (`.dylib`/`.so`/`.dll` depending on OS).

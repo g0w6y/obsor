@@ -4,17 +4,17 @@ Hardened protection for Python source. PRO fixes the structural weaknesses of
 the classic obsor packer and adds a native loader so the standard one-line
 deobfuscation stops working.
 
-> **Honest framing (read this).** No Python protector is "unbreakable," and
-> neither is this. What PRO actually buys you is a real **external-key
-> boundary**: someone who has the protected file but NOT the key cannot get
-> your code without attacking the passphrase (scrypt + AES-256-GCM). That is
-> the whole value. Against someone who **can run the code** — a licensed
-> customer, or any host that holds the key — PRO does *not* hide your logic:
-> the payload must become a runnable Python object, and that object is
-> recoverable in ~50ms with no debugger (see **Measured resistance**). The
-> native tier only removes the classic one-line `compile`/`exec` hook; it is
-> not meaningfully stronger than the pure-Python tier against a key-holder. We
-> do not use the word "military."
+> **Honest framing (read this).** Nothing here is unbreakable, including PRO.
+> What it actually buys you is a real **external-key boundary**: someone
+> holding the protected file but not the key has to attack a passphrase
+> (scrypt + AES-256-GCM) to get your code, and that's the entire value on
+> offer. Once someone **can run the code** — a licensed customer, or any host
+> that holds the key — the picture changes: the payload has to become a
+> runnable Python object, and that object comes back in ~50ms with no
+> debugger attached (see **Measured resistance**). The native tier closes one
+> specific hole, the one-line `compile`/`exec` hook; against a key-holder it
+> isn't much stronger than the pure-Python tier. We don't use the word
+> "military."
 
 ## Why classic packing fails
 
@@ -73,8 +73,9 @@ OBSOR_LICENSE="TOKEN" python dist/app.py
 
 ## Measured resistance (this machine, Python 3.14)
 
-Resistance depends entirely on **which attacker** you mean. The numbers below
-were measured by adversarial review, not estimated.
+Which number matters depends entirely on **which attacker** you mean. All of
+the figures below came from actually attacking this repo's own output, not
+from estimation.
 
 **Attacker has the file but NOT the key** (e.g. a stolen artifact):
 
@@ -117,14 +118,14 @@ interpreter, where the audit event and `settrace` still fire.
 
 ## Native-logic tier (resists a key-holder)
 
-The hardened and native tiers above do **not** hide logic from someone who can
-run the code. The **native-logic tier** does, for the specific routine you move
-into C: you write the sensitive function in C, obsor compiles it into the
-loader `.so`, and the Python payload calls it through an injected module. That
-function ships as machine code — there is no Python code object to dump, so the
-`marshal.loads` / `settrace` / `globals()` recoveries do not apply to it. A
-key-holder can *invoke* it as a black box but must reverse the compiled `.so`
-(IDA/Ghidra) to read the algorithm — the real bar.
+Neither tier above hides logic from someone who can run the code. For one
+routine, the **native-logic tier** can: write the sensitive function in C,
+obsor compiles it into the loader `.so`, and the Python payload calls it
+through an injected module. That function ships as machine code — there's no
+Python code object to dump, so `marshal.loads` / `settrace` / `globals()`
+recovery simply doesn't apply to it. A key-holder can still *invoke* it as a
+black box, but reading the algorithm means reversing the compiled `.so`
+(IDA/Ghidra) — the real bar.
 
 ```bash
 # app.py calls `import obsor_native; obsor_native.secret_transform(...)`
@@ -145,8 +146,8 @@ Caveats that keep this honest:
 - A gate must **return a value the payload needs** (a key, a result), not a
   bool the Python side can skip — a black-box boolean is bypassed by not
   calling it.
-- The compiled `.so` is still reversible with native RE tooling; this raises
-  cost to IDA/Ghidra effort, it is not unbreakable.
+- The compiled `.so` can still be reverse-engineered with IDA/Ghidra — this
+  raises the cost, it doesn't remove the possibility.
 - Same deployment constraints as the native tier (compiler + OpenSSL at build,
   CPython-minor + OpenSSL-path bound `.so`).
 

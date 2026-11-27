@@ -57,10 +57,10 @@ require('./obfuscated.js');  // -> original source printed
 ```
 
 Each layer's generated code calls `eval(...)` or `new Function(...)` on the
-decoded text of the layer below it -- one hook at that boundary peels
-everything, exactly like Python classic's `compile`/`exec` hook. Treat this
-as a deterrent against casual copy-paste, not a security boundary. For an
-external-key boundary, use **PRO**.
+decoded text of the layer below it, so one hook at that boundary peels
+everything -- exactly like Python classic's `compile`/`exec` hook. It raises
+the bar against casual copy-paste and nothing more; for an actual key
+boundary, use **PRO**.
 
 ## PRO
 
@@ -73,16 +73,16 @@ write in C.
 ## Why JS hardened != Python hardened
 
 Python's hardened payload is `marshal`-compiled **bytecode**: a dumped
-payload has no comments/formatting and needs decompilation even if you have
-it in hand. Node/V8 has **no equivalent**. V8's `vm.Script` code cache
-(`produceCachedData`) is a hash-checked accelerator, not a substitute for
-source -- it only runs paired with the *exact* original source text, so
-there is no "ship bytecode, withhold source" path in stock Node. Obsor-JS's
-hardened payload is therefore minified **source text**, not bytecode: the
-instant it's decrypted (correct key) it is fully readable. This is a real
-platform difference, not an oversight -- the native-logic tier is where JS
-gets its actual resistance-to-a-key-holder story, via compiled C/N-API
-instead of a bytecode format V8 doesn't have.
+payload has no comments or formatting and needs decompilation even once
+you're holding it. Node/V8 has **no equivalent**. V8's `vm.Script` code
+cache (`produceCachedData`) is just a hash-checked accelerator that only
+runs paired with the *exact* original source text, so stock Node offers no
+"ship bytecode, withhold source" path at all. Obsor-JS's hardened payload is
+therefore minified **source text**: the instant it's decrypted with the
+correct key, it's fully readable. That's a genuine platform gap, and the
+native-logic tier is where JS actually earns resistance to a key-holder --
+via compiled C/N-API, since V8 has no bytecode format to withhold in the
+first place.
 
 ## Cross-Platform Notes
 

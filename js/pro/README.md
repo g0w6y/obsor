@@ -4,26 +4,26 @@ Hardened protection for JS/Node source. PRO fixes the structural weaknesses
 of the classic obsor-js packer and adds a native (N-API) loader so the
 standard `Function`/`eval` one-line deobfuscation stops working.
 
-> **Honest framing (read this).** No JS protector is "unbreakable," and
-> neither is this. What PRO actually buys you is a real **external-key
-> boundary**: someone who has the protected file but NOT the key cannot get
-> your code without attacking the passphrase (scrypt + AES-256-GCM). That is
-> the whole value. Against someone who **can run the code** -- a licensed
-> customer, or any host that holds the key -- PRO does *not* hide your
-> logic: the payload must become runnable JS, and that JS is recoverable
-> with no debugger, or via the inspector, in well under a second (see
-> **Measured resistance** -- these numbers were produced by actually
-> attacking this repo's own output, not estimated). The native tier only
-> removes the classic one-line `Function`/`eval` hook; it is not
-> meaningfully stronger than the pure-Node tier against a key-holder who
-> attaches `node --inspect`.
+> **Read this before you trust PRO.** Calling anything here "unbreakable" would
+> be a lie, so we don't. What PRO delivers is a real **external-key
+> boundary** -- holding the protected file without the key leaves an
+> attacker stuck brute-forcing a passphrase (scrypt + AES-256-GCM), and
+> that's the full extent of the guarantee. It's a different story once
+> someone **can run the code** -- a licensed customer, or any host that
+> holds the key: the payload has to become runnable JS, and that JS comes
+> back with no debugger, or via the inspector, in well under a second (see
+> **Measured resistance**, measured directly against this repo's own
+> output). The native tier removes exactly one thing, the classic one-line
+> `Function`/`eval` hook; against a key-holder who attaches `node
+> --inspect`, it isn't meaningfully stronger than the pure-Node tier.
 
 ## Why classic packing fails
 
-Classic obsor-js (and javascript-obfuscator / most "N-layer" JS
-obfuscators' weakest configurations) wrap your code in layers that each
-decode themselves and call `eval`/`Function`. The whole stack unwraps in an
-interpreter the attacker controls, so one hook peels every layer:
+Classic obsor-js, like javascript-obfuscator's weaker configurations and
+most "N-layer" JS obfuscators, stacks layers that each decode themselves and
+call `eval`/`Function`. All of that unwrapping happens inside an interpreter
+the attacker fully controls, so a single hook at the right spot peels every
+layer at once:
 
 ```js
 const Real = global.Function;
@@ -33,8 +33,8 @@ require('./obfuscated.js'); // -> original source, logged
 
 Measured in this repo: **one `Function()` hook recovers the full original
 source from the `military` preset** (the code verbatim; that preset runs
-`minify` first, so comments are already gone). Layer count does not help --
-2 layers or 20, it is the same single hook.
+`minify` first, so comments are already gone). Adding more layers doesn't
+help -- whether it's 2 or 20, the same single hook catches them all.
 
 ## What PRO changes
 
@@ -79,9 +79,9 @@ non-native tiers.)
 
 ## Measured resistance (this machine, Node 26.13.1, 2026-11-27)
 
-Resistance depends entirely on **which attacker** you mean. The numbers
-below were measured by adversarial review against this repo's own output --
-not estimated.
+What the numbers mean hinges entirely on **which attacker** you're picturing.
+Every figure below came from adversarial review of this repo's own output,
+nothing guessed.
 
 **Attacker has the file but NOT the key** (e.g. a stolen artifact):
 
@@ -119,9 +119,9 @@ protocol, and after `run()` the decrypted functions still sit in `global`.
   plaintext secrets in protected code.
 - The anti-tamper guard (opt-in, `--guard`) runs in-process, can be patched
   out, only checks `require('inspector').url()` (catches `--inspect`
-  attached *before* the guard runs, not one attached after, nor other
-  dynamic-analysis tooling), and breaks debuggers/coverage. Treat it as
-  cosmetic, not a boundary.
+  attached *before* the guard runs, missing one attached after or any other
+  dynamic-analysis tooling), and breaks debuggers/coverage. It's cosmetic,
+  nothing more.
 - `machine` binding uses the first non-loopback MAC via
   `os.networkInterfaces()` (spoofable) and does not survive payload
   extraction -- lifted source runs on any host.
@@ -130,14 +130,14 @@ protocol, and after `run()` the decrypted functions still sit in `global`.
 
 ## Native-logic tier (resists a key-holder)
 
-The hardened and native tiers above do **not** hide logic from someone who
-can run the code. The **native-logic tier** does, for the specific routine
-you move into C: you write the sensitive function as a standard N-API C
-function, obsor-js compiles it into the loader `.node`, and the JS payload
-calls it through an injected global (default `obsorNative`). That function
-ships as machine code -- there is no JS source for it to recover. A
-key-holder can *invoke* it as a black box but must reverse the compiled
-`.node` (IDA/Ghidra/Frida) to read the algorithm -- the real bar.
+Hardened and native both leave logic exposed to anyone who can run the
+code. The **native-logic tier** closes that gap for one routine: write the
+sensitive function as a standard N-API C function, obsor-js compiles it
+into the loader `.node`, and the JS payload calls it through an injected
+global (default `obsorNative`). That function ships as machine code, so
+there's no JS source left to recover. A key-holder can still *invoke* it as
+a black box, but reading the algorithm means reversing the compiled
+`.node` (IDA/Ghidra/Frida) -- the real bar.
 
 ```bash
 # app.js calls: obsorNative.secret_transform(7)
@@ -156,15 +156,14 @@ dump, and searching the compiled `.node` for the function's constants with
 Rough tier vs a key-holder: **~6-7/10 for the C'd routine** (vs ~2/10 for
 logic left in JS, per the table above). See `examples/native_logic/`.
 
-Caveats that keep this honest:
+A few things keep this claim honest:
 - Only the code you *write in C* is protected; the rest of the payload is
   still recoverable by a key-holder via the inspector protocol above. Put
   just the crown-jewel routine in C.
-- A gate must **return a value the payload needs** (a key, a result), not a
-  bool the JS side can skip -- a black-box boolean is bypassed by not
-  calling it.
-- The compiled `.node` is still reversible with native RE tooling; this
-  raises cost to IDA/Ghidra effort, it is not unbreakable.
+- Make the gate **return a value the payload actually needs** (a key, a
+  result). A bare boolean gets skipped -- the JS side just doesn't call it.
+- IDA/Ghidra can still take the compiled `.node` apart. This raises the
+  effort bar; it doesn't close the door.
 - Same deployment constraints as the native tier (compiler + OpenSSL +
   node-gyp at build, Node-ABI-bound `.node`).
 
