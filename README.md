@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Multi-layer, multi-language obfuscation / packing toolkit</b><br>
-  Python · JavaScript · .NET · PRO external-key mode, honestly measured against this repo's own output
+  Python · JavaScript · .NET · Java · PRO external-key mode, honestly measured against this repo's own output
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 ## What is Obsor?
 
-Obsor is an open-source obfuscation / packing toolkit, now spanning two
+Obsor is an open-source obfuscation / packing toolkit spanning four
 languages, each with the same two-engine shape:
 
 - **Classic** — layers 20+ encoding and cipher techniques to deter *casual*
@@ -31,16 +31,16 @@ languages, each with the same two-engine shape:
 - **PRO** — a real external-key boundary: the key is never stored (re-derived
   at runtime via scrypt), the payload is authenticated with AES-256-GCM,
   identifiers are randomized per build, and a native loader defeats the
-  classic one-line hook. Each language's `pro/README.md` documents exactly
-  what it does and does not protect — including honest, measured limits
-  against a key-holding attacker, proven by actually attacking this repo's
-  own output, not estimated.
+  classic one-line hook. Each language's `pro/README.md` lays out exactly
+  what it does and doesn't protect, with limits measured by actually
+  attacking this repo's own output rather than guessed at.
 
 | Language | Classic engine | PRO docs |
 |---|---|---|
 | Python | [`main.py`](main.py) (23 methods) | [`pro/README.md`](pro/README.md) |
 | JavaScript / Node | [`js/main.js`](js/main.js) (22 methods) | [`js/pro/README.md`](js/pro/README.md) |
-| .NET / C# | [`dotnet/Obsor.Classic`](dotnet/Obsor.Classic) (IL rewriter, 2 protections) | [`dotnet/Obsor.Pro/README.md`](dotnet/Obsor.Pro/README.md) |
+| .NET / C# | [`dotnet/Obsor.Classic`](dotnet/Obsor.Classic) (IL rewriter, 3 protections) | [`dotnet/Obsor.Pro/README.md`](dotnet/Obsor.Pro/README.md) |
+| Java | [`java/obsor-classic`](java/obsor-classic) (ASM bytecode rewriter, 2 protections) | [`java/obsor-pro/README.md`](java/obsor-pro/README.md) |
 
 The Python engine also includes preset profiles, standalone executable
 building, and built-in self-testing; see [`js/README.md`](js/README.md) for
@@ -55,6 +55,15 @@ stacking text encodings, and Obsor.Pro has only **two** tiers instead of
 three — see [`dotnet/README.md`](dotnet/README.md) for why a middle
 "native" tier would be dishonest marketing in .NET's case and doesn't exist
 here.
+
+The Java port follows the same reasoning one language further: no
+source-level `exec` equivalent, so Obsor.Classic rewrites compiled
+**bytecode** via ASM (the library ProGuard/R8 are themselves built on), and
+Obsor.Pro also skips the middle native tier for the same honest reason —
+see [`java/README.md`](java/README.md), including a measured proof that the
+attack recovering hardened output (`-javaagent` + `Instrumentation.
+addTransformer`) is a completely ordinary, documented JVM mechanism, not an
+exotic hack.
 
 ---
 
@@ -142,7 +151,7 @@ dotnet build -c Release
 dotnet Obsor.Classic/bin/Release/net8.0/obsor-classic.dll \
   -i examples/sample_input.cs -o /tmp/protected.dll -m rename,strenc --test
 
-# PRO hardened: Roslyn-compiled payload, AES-256-GCM, no ships-source-leak
+# PRO hardened: Roslyn-compiled payload, AES-256-GCM, external key, no source leak
 dotnet Obsor.Pro/bin/Release/net8.0/obsor-pro.dll \
   -i examples/sample_input.cs -o /tmp/hard.dll --tier hardened -k "my passphrase"
 OBSOR_KEY="my passphrase" dotnet /tmp/hard.dll
@@ -151,6 +160,28 @@ OBSOR_KEY="my passphrase" dotnet /tmp/hard.dll
 See [`dotnet/README.md`](dotnet/README.md) -- this port is not source-level
 obfuscation at all, it rewrites compiled IL the way ConfuserEx/Obfuscar do,
 and PRO has two tiers instead of three for a documented reason.
+
+### Java
+
+```bash
+cd java
+mvn -q package -DskipTests
+
+# Classic: rewrites compiled bytecode via ASM (ProGuard/R8's own library)
+java -jar obsor-classic/target/obsor-classic-jar-with-dependencies.jar \
+  -i examples/sample_input.java -o /tmp/protected --test
+
+# PRO hardened: javac-compiled payload, AES-256-GCM, Argon2id, no source leak
+java -jar obsor-pro/target/obsor-pro-jar-with-dependencies.jar \
+  -i examples/sample_input.java -o /tmp/hard.jar --tier hardened -k "my passphrase"
+OBSOR_KEY="my passphrase" java -jar /tmp/hard.jar
+```
+
+See [`java/README.md`](java/README.md) -- same architecture as .NET (rewrite
+compiled bytecode, two PRO tiers not three) with its own real wrinkles:
+Argon2id from day one (no repeat of .NET's initial PBKDF2 gap), and a
+`-javaagent`-based attack that recovers hardened output using a completely
+ordinary JVM API, not an exotic hack.
 
 ---
 
@@ -243,6 +274,13 @@ obsor/
 │   ├── Obsor.Selftest/      # dotnet obsor-selftest.dll
 │   ├── examples/
 │   └── README.md          # obsor-.NET docs + the architecture difference
+├── java/                  # Java port -- same architecture as .NET, ASM-based
+│   ├── obsor-classic/      # ASM bytecode rewriter CLI
+│   ├── obsor-pro/           # hardened (javac+AES-GCM+Argon2id) + native-logic (JNI)
+│   │   └── README.md         # PRO-Java docs + javaagent measured attack
+│   ├── obsor-selftest/      # java -jar obsor-selftest.jar
+│   ├── examples/
+│   └── README.md          # obsor-Java docs + Java-specific wrinkles
 ├── requirements.txt
 ├── README.md
 ├── LICENSE               # Apache 2.0
