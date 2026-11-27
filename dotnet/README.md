@@ -27,21 +27,69 @@ dotnet/
 
 ```bash
 # from .cs source (compiles via Roslyn first, for parity with the other demos)
-dotnet obsor-classic.dll -i examples/sample_input.cs -o protected.dll -m rename,strenc -k 0x5A
+dotnet obsor-classic.dll -i examples/sample_input.cs -o protected.dll -m rename,strenc,cflow -k 0x5A
 
 # from an already-built assembly (the real, intended workflow -- same as ConfuserEx/Obfuscar)
-dotnet obsor-classic.dll -i MyApp.dll -o protected.dll -m rename,strenc
+dotnet obsor-classic.dll -i MyApp.dll -o protected.dll -m rename,strenc,cflow
 
 dotnet protected.dll   # ships with Obsor.Runtime.dll alongside it
 ```
 
-Two protections, not 20+ interchangeable encodings -- .NET's unit of
-obfuscation is IL **members and literals**, not swappable text transforms:
+Three protections, not 20+ interchangeable encodings -- .NET's unit of
+obfuscation is IL **members and literals/control-flow**, not swappable text
+transforms:
 
 | Method | What it does |
 |---|---|
 | `rename` | randomizes private field/method names |
 | `strenc` | XORs string literals, replaces `ldstr "x"` with `ldstr <xor'd>` + a call to `ObsorRuntime.StrDec.Decrypt` |
+| `cflow` | injects an opaque-predicate branch at the start of every method body, inflating the CFG a decompiler has to untangle |
+
+### `cflow`: opaque predicates
+
+For every method with a body (constructors, static cctors, property/event
+accessors, compiler-generated methods included -- the one case skipped is a
+method with no body at all, i.e. abstract/extern, which has no
+`Instructions` to inject into), `cflow` prepends IL that computes
+`t = (Environment.TickCount * Environment.TickCount) % 4` into a local, then
+branches on `t != 2`. That's always true -- squares are only ever `0` or `1`
+mod 4, never `2`, a property that survives 32-bit truncation (4 divides
+2^32) and IL's signed `rem` (the only effect a negative product has is
+turning residue `1` into `-3`, never into `2`). `Environment.TickCount` is
+read at runtime, not a compile-time constant, so a decompiler can't just
+constant-fold the branch away -- it has to recognize the mod-4
+quadratic-residue identity to prove the "dead" branch is actually dead.
+Verified before shipping with a 54M-case brute force (every int32 edge case
+plus 50M random samples): zero counterexamples. The dead branch also ends
+with an unconditional jump to the exact same real target as the live branch,
+as a second, independent safety net -- even if the number-theory argument
+were somehow wrong for some input, both paths converge on the same code, so
+behavior can't change.
+
+This injects exactly once per method, always at the very start, never
+scattered mid-method: the method entry is the only point in an arbitrary
+method body that's provably stack-empty without doing data-flow analysis
+(the CLR guarantees an empty evaluation stack at method entry), so it's the
+only injection point used here. It only touches the measurable
+decompiler-facing shape of the method (basic-block count), not what the
+method computes, and it does **not** hide string literals or renamed
+members by itself -- combine with `strenc`/`rename` for that, which is
+exactly what `-m rename,strenc,cflow` does above.
+
+Measured, not estimated: on this repo's own `examples/sample_input.cs` (2
+methods touched), basic blocks go from 6 to 10; on
+`examples/sample_with_private.cs` (5 methods touched), 5 to 15. Both are a
+flat +2 basic blocks per instrumented method (the opaque-predicate block
+itself, plus the dead junk block) -- consistent across both examples, and
+printed for any real run (`cflow: injected opaque predicates into N methods
+(approx basic blocks X -> Y)`).
+
+Known scope limit shared with `rename`/`strenc`, not new to `cflow`: this
+whole tool only walks `module.Types` (top-level types), so methods on
+compiler-generated nested types -- iterator (`yield`) and async state
+machines, lambda/local-function display classes -- aren't touched by any of
+the three protections. The outer method that constructs the iterator/state
+machine is still instrumented; its generated `MoveNext` is not.
 
 ### What classic does NOT protect against
 
@@ -56,20 +104,20 @@ string from the embedded key sitting right next to it:
 recovered 2 string literals statically, with NO execution of the assembly
 ```
 
-This is not a hypothetical -- it is the exact, documented weakness real
+That's not hypothetical -- it's the exact, documented weakness real
 deobfuscators (`de4dot`) use against ConfuserEx's equivalent "constants"
-protection. The key is embedded in the IL; a tool that reads IL (no
-execution, no debugger) recovers everything. Same honesty rule as
-Python/JS classic: this is a deterrent against casual decompilation, not a
-security boundary.
+protection. The key sits right there in the IL, so any tool that reads IL,
+no execution, no debugger, recovers everything. Same honesty rule as the
+Python/JS classic engines: this slows down casual decompilation and stops
+there.
 
 ## PRO (Obsor.Pro)
 
-See [`Obsor.Pro/README.md`](Obsor.Pro/README.md). Two tiers, not three --
-and the missing middle tier is a deliberate, documented finding, not a gap:
-**hardened** (external key, AES-256-GCM, the "crypter" pattern) and
-**native-logic** (the one tier that resists a key-holder, via P/Invoke into
-a compiled C library).
+See [`Obsor.Pro/README.md`](Obsor.Pro/README.md). Only two tiers here --
+the missing middle one is a deliberate, documented finding rather than an
+oversight: **hardened** (external key, AES-256-GCM, the "crypter" pattern)
+and **native-logic** (the one tier that resists a key-holder, via P/Invoke
+into a compiled C library).
 
 ## Why .NET PRO != Python/JS PRO
 

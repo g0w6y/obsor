@@ -47,6 +47,15 @@ if (File.Exists(classicDll))
     var bytes = File.ReadAllBytes(classicOut);
     var text = System.Text.Encoding.ASCII.GetString(bytes);
     Check("classic: original string literal not present in compiled output", !text.Contains("FIB ["));
+
+    // cflow: combined with rename+strenc, must not change behavior, and
+    // should report that it actually injected opaque predicates.
+    var cflowOut = Path.Combine(wd, "classic_cflow.dll");
+    var (cflowCode, cflowStdout) = Run(classicDll, $"-i \"{sampleCs}\" -o \"{cflowOut}\" -m rename,strenc,cflow -k 0x5A");
+    Check("classic+cflow: builds", cflowCode == 0 && File.Exists(cflowOut));
+    Check("classic+cflow: reports injecting opaque predicates", cflowStdout.Contains("cflow: injected opaque predicates into"));
+    var cflowRun = Run(cflowOut, "");
+    Check("classic+cflow: runs and produces correct output", cflowRun.stdout.Trim() == "FIB [0,1,1,2,3,5,8,13]");
 }
 else
 {
