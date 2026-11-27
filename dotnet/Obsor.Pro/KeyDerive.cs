@@ -1,25 +1,25 @@
 // Key derivation for Obsor.Pro.
 //
-// HONEST GAP vs Python/JS PRO: both of those use scrypt (memory-hard).
-// .NET's BCL has no scrypt implementation, and pulling one in means an
-// extra NuGet dependency (e.g. Konscious.Security.Cryptography, Argon2) --
-// a call this project hasn't made yet (see dotnet/README.md "Why .NET PRO
-// != Python/JS PRO"). This uses PBKDF2-HMACSHA256 (System.Security.
-// Cryptography.Rfc2898DeriveBytes, builtin, no NuGet) with a high iteration
-// count instead. PBKDF2 is NOT memory-hard the way scrypt is: a GPU/ASIC
-// attacker gets much more parallelism against it per watt than against
-// scrypt for the same CPU-time cost. Treat the "offline brute force
-// infeasible" claims in pro/README.md as weaker for .NET than for the other
-// two languages until this gets a real memory-hard KDF.
+// Previously PBKDF2-HMACSHA256 (not memory-hard). As of 2026-11-27 this is
+// Argon2id via Konscious.Security.Cryptography.Argon2 -- a small, pure-.NET
+// NuGet package with no native dependency, closing the gap flagged in
+// dotnet/Obsor.Pro/README.md "Honest limits". Parameters below (128 MiB,
+// 3 iterations, parallelism 1) were chosen to land in the same memory/cost
+// ballpark as the scrypt parameters Python/JS PRO use (N=2^17, ~128 MiB),
+// not copied from an OWASP minimum -- measured on this machine at ~500ms
+// per derivation, see Obsor.Pro/README.md "Measured resistance".
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using Konscious.Security.Cryptography;
 
 namespace Obsor.Pro;
 
 public static class KeyDerive
 {
-    public const int Iterations = 600_000; // OWASP 2023 minimum for PBKDF2-SHA256
+    public const int Argon2MemoryKiB = 128 * 1024; // 128 MiB
+    public const int Argon2Iterations = 3;
+    public const int Argon2Parallelism = 1;
     public const int DkLen = 32; // AES-256
     public const int MinSecretLen = 12;
 
@@ -36,8 +36,8 @@ public static class KeyDerive
     {
         if (secret.Length < MinSecretLen)
             Console.Error.WriteLine($"[obsor] WARNING: secret is {secret.Length} chars; use >= " +
-                $"{MinSecretLen} (a passphrase, not a word). A short secret is brute-forceable " +
-                "offline, more so here than the scrypt-based Python/JS tiers (see KeyDerive.cs).");
+                $"{MinSecretLen} (a passphrase, not a word). A short secret is brute-forceable offline " +
+                "despite Argon2id's memory cost.");
     }
 
     public static byte[] ResolveSecret(string mode, string? passphrase)
@@ -59,6 +59,15 @@ public static class KeyDerive
         }
     }
 
-    public static byte[] DeriveKey(byte[] secret, byte[] salt) =>
-        Rfc2898DeriveBytes.Pbkdf2(secret, salt, Iterations, HashAlgorithmName.SHA256, DkLen);
+    public static byte[] DeriveKey(byte[] secret, byte[] salt)
+    {
+        using var argon2 = new Argon2id(secret)
+        {
+            Salt = salt,
+            DegreeOfParallelism = Argon2Parallelism,
+            Iterations = Argon2Iterations,
+            MemorySize = Argon2MemoryKiB,
+        };
+        return argon2.GetBytes(DkLen);
+    }
 }

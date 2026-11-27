@@ -6,7 +6,7 @@ one routine you actually want to keep out of reach.
 > **Honest framing (read this).** No .NET protector is "unbreakable," and
 > neither is this. What PRO buys you is a real **external-key boundary**:
 > someone who has the protected file but NOT the key cannot get your code
-> without attacking the passphrase (PBKDF2 + AES-256-GCM). That is the
+> without attacking the passphrase (Argon2id + AES-256-GCM). That is the
 > whole value. Against someone who **can run the code** -- a licensed
 > customer, or any host that holds the key -- PRO does *not* hide your
 > logic: the payload must become a loaded managed assembly, and that
@@ -18,7 +18,7 @@ one routine you actually want to keep out of reach.
 
 | Weakness in classic | PRO fix |
 |---|---|
-| XOR key for string literals sits in the IL right next to the call | **Key never stored** -- re-derived at runtime (PBKDF2) from an external secret: passphrase, host binding, or license token |
+| XOR key for string literals sits in the IL right next to the call | **Key never stored** -- re-derived at runtime (Argon2id, memory-hard) from an external secret: passphrase, host binding, or license token |
 | Static Mono.Cecil pass recovers everything with zero execution | Payload is a whole separate assembly, AES-256-GCM-encrypted; nothing to statically walk until it's decrypted in memory at runtime |
 | Member names are the only thing randomized | **Every launcher identifier randomized per build** (class + local names) -- no two outputs share a static signature |
 | Classic has no key-mismatch signal | **AES-256-GCM authenticated** -- wrong key or a tampered blob refuses to run |
@@ -26,7 +26,7 @@ one routine you actually want to keep out of reach.
 ## Tiers
 
 - **hardened**: Roslyn-compile the payload source to a managed assembly,
-  AES-256-GCM-encrypt it with a PBKDF2-derived key, emit a launcher that
+  AES-256-GCM-encrypt it with an Argon2id-derived key, emit a launcher that
   decrypts and `Assembly.Load(byte[])`s it, then invokes the entry point
   via reflection. Optional anti-tamper guard (`--guard`, off by default --
   bypassable, breaks debuggers). Ships as a launcher `.dll` + a copy of
@@ -66,8 +66,8 @@ not estimated.
 | Target | Result | Rough tier |
 |---|---|---|
 | classic `rename,strenc` | one static Mono.Cecil pass → every string recovered, zero execution (key is embedded) | ~2/10 |
-| PRO hardened, strong passphrase | offline brute only; PBKDF2 600k iterations SHA-256 → costly but **not memory-hard** (see KeyDerive.cs) -- weaker than the scrypt-based Python/JS tiers against a GPU/ASIC attacker for the same wall-clock cost | ~5/10 |
-| PRO hardened, weak passphrase | dictionary-cracked quickly → full recovery | ~1/10 |
+| PRO hardened, strong passphrase | offline brute only; Argon2id, 128 MiB / 3 iterations / parallelism 1 -- measured ~520ms per derivation on this machine (~1.9 guesses/sec/core), and memory-hard so a GPU/ASIC attacker doesn't get the usual cheap parallelism boost PBKDF2 would have given them -> infeasible | ~6/10 |
+| PRO hardened, weak passphrase | dictionary-cracked in well under a second (520ms × a small dictionary) → full recovery | ~1/10 |
 
 **Attacker can run the code** -- a licensed customer / key-holding host (the
 realistic IP-piracy threat):
@@ -83,11 +83,12 @@ realistic IP-piracy threat):
   recovers it via the `AssemblyLoad` + `GetILAsByteArray` technique above --
   verified, not theorized. No native loader closes this; see "Why no middle
   native tier" in the root README.
-- **Not memory-hard key derivation.** PBKDF2-HMACSHA256, not scrypt --
-  because the .NET BCL has no scrypt and this project hasn't pulled in a
-  NuGet package (Konscious.Security.Cryptography, libsodium bindings) for
-  one yet. Treat the "strong passphrase -> infeasible" claim as weaker here
-  than in Python/JS until that changes.
+- **Key derivation cost is tunable, and the current numbers are a choice,
+  not a law of physics.** Argon2id at 128 MiB / 3 iterations costs ~520ms
+  per guess on this machine -- raise `Argon2MemoryKiB`/`Argon2Iterations`
+  in `KeyDerive.cs` for more resistance at the cost of slower startup for
+  legitimate runs too (same tradeoff scrypt's `N` parameter has in
+  Python/JS).
 - The anti-tamper guard (opt-in, `--guard`) only checks
   `Debugger.IsAttached` and a timing loop -- it does **not** detect a
   profiler, ETW trace, or `dotnet-dump`/`dotnet-trace` snapshot, and it runs

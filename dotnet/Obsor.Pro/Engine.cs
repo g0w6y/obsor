@@ -88,8 +88,16 @@ public static class Engine
         Directory.CreateDirectory(outDir);
         File.WriteAllBytes(outPath, launcherBytes);
 
-        var proDllPath = typeof(KeyDerive).Assembly.Location;
-        File.Copy(proDllPath, Path.Combine(outDir, Path.GetFileName(proDllPath)), overwrite: true);
+        // Copy Obsor.Pro.dll AND its transitive dependencies (Konscious's
+        // Argon2id implementation) -- the launcher calls into KeyDerive at
+        // runtime, so everything KeyDerive itself needs must ship too.
+        var proDllPath = typeof(KeyDerive).Assembly.Location; // "obsor-pro.dll" (AssemblyName in the csproj), not "Obsor.Pro.dll"
+        var proDir = Path.GetDirectoryName(proDllPath)!;
+        foreach (var dep in new[] { Path.GetFileName(proDllPath), "Konscious.Security.Cryptography.Argon2.dll", "Konscious.Security.Cryptography.Blake2.dll" })
+        {
+            var src = Path.Combine(proDir, dep);
+            if (File.Exists(src)) File.Copy(src, Path.Combine(outDir, dep), overwrite: true);
+        }
 
         var outBase = Path.Combine(outDir, Path.GetFileNameWithoutExtension(outPath));
         File.WriteAllText(outBase + ".runtimeconfig.json",

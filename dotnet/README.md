@@ -73,15 +73,13 @@ a compiled C library).
 
 ## Why .NET PRO != Python/JS PRO
 
-Two real platform differences, both documented in depth in
-`Obsor.Pro/README.md`:
+One real platform difference, documented in depth in `Obsor.Pro/README.md`
+(a second one -- no memory-hard KDF in the BCL -- was closed 2026-11-27 by
+pulling in `Konscious.Security.Cryptography.Argon2`, a small pure-.NET NuGet
+package with no native dependency; key derivation is now Argon2id,
+parameter-matched to the other two languages' scrypt cost):
 
-1. **No scrypt in the BCL.** Python/JS both get memory-hard key derivation
-   for free (`hashlib.scrypt`, `crypto.scryptSync`). .NET's
-   `Rfc2898DeriveBytes` is PBKDF2 -- not memory-hard, weaker against a
-   GPU/ASIC attacker per CPU-second spent. Pulling in a scrypt/Argon2 NuGet
-   package would fix this; this port hasn't made that call yet.
-2. **No middle "native" tier.** Python's native loader and JS's N-API
+1. **No middle "native" tier.** Python's native loader and JS's N-API
    loader each defeat a *specific* hook (the `compile`/`exec` hook, the
    `Function`/`eval` hook) that works against their own hardened tier.
    .NET's hardened-tier weakness isn't a hookable global function at all --
@@ -98,9 +96,9 @@ Two real platform differences, both documented in depth in
 ## Requirements
 
 - .NET SDK 8.0+ (`dotnet --version`)
-- Obsor.Classic / Obsor.Pro pull `Mono.Cecil` and `Microsoft.CodeAnalysis.CSharp` from NuGet (both free, both widely used -- Cecil is what ConfuserEx itself is built on)
+- Obsor.Classic / Obsor.Pro pull `Mono.Cecil`, `Microsoft.CodeAnalysis.CSharp`, and `Konscious.Security.Cryptography.Argon2` from NuGet (all free, all widely used -- Cecil is what ConfuserEx itself is built on, Konscious is a pure-.NET Argon2 implementation with no native dependency)
 - `Obsor.Pro.Native.LogicBuild` (native-logic tier) needs `clang` (or another C compiler) on PATH at build time
-- No native dependency for classic or hardened -- `Rfc2898DeriveBytes` and `AesGcm` are both BCL builtins
+- No native (C/C++) dependency for classic or hardened -- `AesGcm` is a BCL builtin and Konscious's Argon2id is pure managed code
 
 ## Disclaimer
 
