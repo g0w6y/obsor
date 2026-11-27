@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Multi-layer, multi-language obfuscation / packing toolkit</b><br>
-  Python + JavaScript · 20+ encode &amp; cipher techniques per language · Preset profiles · PRO external-key mode
+  Python · JavaScript · .NET · PRO external-key mode, honestly measured against this repo's own output
 </p>
 
 <p align="center">
@@ -40,12 +40,21 @@ languages, each with the same two-engine shape:
 |---|---|---|
 | Python | [`main.py`](main.py) (23 methods) | [`pro/README.md`](pro/README.md) |
 | JavaScript / Node | [`js/main.js`](js/main.js) (22 methods) | [`js/pro/README.md`](js/pro/README.md) |
+| .NET / C# | [`dotnet/Obsor.Classic`](dotnet/Obsor.Classic) (IL rewriter, 2 protections) | [`dotnet/Obsor.Pro/README.md`](dotnet/Obsor.Pro/README.md) |
 
 The Python engine also includes preset profiles, standalone executable
 building, and built-in self-testing; see [`js/README.md`](js/README.md) for
 the Node port's equivalents and the one real platform difference (no
 bytecode-only execution path in stock Node — read "Why JS hardened != Python
 hardened" there before assuming parity).
+
+The .NET port is architecturally different, not just thinner: .NET has no
+source-level `exec`/`eval` equivalent, so Obsor.Classic rewrites compiled
+**IL** via Mono.Cecil (the same library ConfuserEx is built on) instead of
+stacking text encodings, and Obsor.Pro has only **two** tiers instead of
+three — see [`dotnet/README.md`](dotnet/README.md) for why a middle
+"native" tier would be dishonest marketing in .NET's case and doesn't exist
+here.
 
 ---
 
@@ -122,6 +131,26 @@ OBSOR_KEY="my passphrase" node dist/protected.js
 See [`js/README.md`](js/README.md) for the full method list and the one
 real platform difference from Python (no bytecode-only execution path in
 stock Node).
+
+### .NET / C#
+
+```bash
+cd dotnet
+dotnet build -c Release
+
+# Classic: rewrites compiled IL via Mono.Cecil (ConfuserEx's own library)
+dotnet Obsor.Classic/bin/Release/net8.0/obsor-classic.dll \
+  -i examples/sample_input.cs -o /tmp/protected.dll -m rename,strenc --test
+
+# PRO hardened: Roslyn-compiled payload, AES-256-GCM, no ships-source-leak
+dotnet Obsor.Pro/bin/Release/net8.0/obsor-pro.dll \
+  -i examples/sample_input.cs -o /tmp/hard.dll --tier hardened -k "my passphrase"
+OBSOR_KEY="my passphrase" dotnet /tmp/hard.dll
+```
+
+See [`dotnet/README.md`](dotnet/README.md) -- this port is not source-level
+obfuscation at all, it rewrites compiled IL the way ConfuserEx/Obfuscar do,
+and PRO has two tiers instead of three for a documented reason.
 
 ---
 
@@ -207,6 +236,13 @@ obsor/
 │   │   └── README.md        # PRO-JS docs + honest threat model
 │   ├── examples/
 │   └── README.md          # obsor-js docs + Python-vs-Node differences
+├── dotnet/                # .NET port -- IL rewriter, not source-level (different shape)
+│   ├── Obsor.Classic/      # Mono.Cecil IL rewriter CLI
+│   ├── Obsor.Pro/           # hardened (Roslyn+AES-GCM) + native-logic (P/Invoke)
+│   │   └── README.md         # PRO-.NET docs + why only 2 tiers, not 3
+│   ├── Obsor.Selftest/      # dotnet obsor-selftest.dll
+│   ├── examples/
+│   └── README.md          # obsor-.NET docs + the architecture difference
 ├── requirements.txt
 ├── README.md
 ├── LICENSE               # Apache 2.0
