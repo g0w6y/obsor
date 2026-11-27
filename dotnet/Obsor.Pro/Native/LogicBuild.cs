@@ -56,9 +56,23 @@ public static class LogicBuild
             UseShellExecute = false,
         };
         using var proc = Process.Start(psi)!;
+        // Drain both pipes asynchronously WHILE the process runs, not after
+        // WaitForExit(). Both streams are redirected but nothing read them
+        // until exit, which deadlocks the moment clang's combined
+        // stdout+stderr exceeds the OS pipe buffer (64KB on this machine):
+        // clang blocks on the write, so it never exits, so WaitForExit()
+        // never returns. Reproduced directly: a C source that makes clang
+        // emit >64KB of diagnostics hung this exact pattern for 400+s until
+        // force-killed. A developer-supplied native-logic C source hitting
+        // enough legitimate warnings is a realistic way to trip this.
+        var stderrBuf = new System.Text.StringBuilder();
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) stderrBuf.AppendLine(e.Data); };
+        proc.OutputDataReceived += (_, e) => { };
+        proc.BeginErrorReadLine();
+        proc.BeginOutputReadLine();
         proc.WaitForExit();
         if (proc.ExitCode != 0)
-            throw new InvalidOperationException("native compile failed:\n" + proc.StandardError.ReadToEnd());
+            throw new InvalidOperationException("native compile failed:\n" + stderrBuf.ToString());
 
         Engine.ProtectFile(WriteTemp(workdir, payloadSource), outPath, keyMode, passphrase, guard);
     }

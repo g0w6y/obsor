@@ -172,7 +172,14 @@ const METHODS = {
   unicode: {
     description: 'JS \\u unicode-escape encoding',
     apply: (code) => {
-      const esc = Array.from(code).map((c) => '\\u' + c.codePointAt(0).toString(16).padStart(4, '0')).join('');
+      // Code points above 0xFFFF (most emoji, etc.) need the ES6 \u{...} form:
+      // a plain \u escape only ever consumes exactly 4 hex digits, so a 5-6
+      // digit codepoint like 1f600 would decode as ὠ followed by a
+      // literal "0", corrupting the character.
+      const esc = Array.from(code).map((c) => {
+        const cp = c.codePointAt(0);
+        return cp > 0xffff ? `\\u{${cp.toString(16)}}` : '\\u' + cp.toString(16).padStart(4, '0');
+      }).join('');
       return `eval("${esc}");\n`;
     },
   },
@@ -235,13 +242,27 @@ const METHODS = {
   vigenere: {
     description: 'Vigenère cipher with random keyword',
     apply: (code, opts) => {
-      let keyword = opts.key != null ? String(opts.key).toUpperCase()
-        : Array.from({ length: 8 }, () => String.fromCharCode(randInt(65, 90))).join('');
-      if (opts.key == null) { console.log(yellow(`[!] Generated random Vigenère keyword: ${keyword}`)); recordKey('Vigenere keyword', keyword); }
+      // Falsy (missing OR empty-string) key -> random keyword. An empty
+      // string used to slip past the old `!= null` check and make
+      // `ki % keyword.length` divide by zero (NaN shift -> NUL bytes).
+      let keyword;
+      if (opts.key) {
+        keyword = String(opts.key).toUpperCase();
+      } else {
+        keyword = Array.from({ length: 8 }, () => String.fromCharCode(randInt(65, 90))).join('');
+        console.log(yellow(`[!] Generated random Vigenère keyword: ${keyword}`));
+        recordKey('Vigenere keyword', keyword);
+      }
+      // Normalize the shift into 0..25 with a true (non-negative) modulo.
+      // JS's `%` is a remainder op that can return negative results, so a
+      // keyword character with a high code point (Cyrillic/CJK/emoji -> a
+      // shift value way bigger than 26) broke the decode side's single
+      // `+26` compensation and corrupted the round-trip.
+      const norm26 = (n) => ((n % 26) + 26) % 26;
       let ki = 0;
       const enc = Array.from(code).map((c) => {
         if (/[a-zA-Z]/.test(c)) {
-          const shift = keyword.charCodeAt(ki % keyword.length) - 65;
+          const shift = norm26(keyword.charCodeAt(ki % keyword.length) - 65);
           const base = c >= 'a' ? 97 : 65;
           const r = String.fromCharCode((c.charCodeAt(0) - base + shift) % 26 + base);
           ki++;
@@ -250,7 +271,8 @@ const METHODS = {
         return c;
       }).join('');
       return `(function(){const kw=${jstr(keyword)};const s=${jstr(enc)};let r='';let ki=0;` +
-        `for(const c of s){if(/[a-zA-Z]/.test(c)){const sh=kw.charCodeAt(ki%kw.length)-65;` +
+        `const n26=(n)=>((n%26)+26)%26;` +
+        `for(const c of s){if(/[a-zA-Z]/.test(c)){const sh=n26(kw.charCodeAt(ki%kw.length)-65);` +
         `const base=c>='a'?97:65;r+=String.fromCharCode((c.charCodeAt(0)-base-sh+26)%26+base);ki++;}else r+=c;}` +
         `eval(r);})();\n`;
     },
@@ -261,20 +283,30 @@ const METHODS = {
       const sq = ['ABCDE', 'FGHIK', 'LMNOP', 'QRSTU', 'VWXYZ'];
       const map = {};
       sq.forEach((row, r) => Array.from(row).forEach((ch, c) => { map[ch] = `${r + 1}${c + 1}`; if (ch === 'I') map.J = `${r + 1}${c + 1}`; }));
+      // '0' + raw char is an unambiguous escape for every non-letter
+      // passthrough character (row/col digits are always 1-5, so a leading
+      // '0' can never be a real pair). Without this escape, a literal digit
+      // in the source (e.g. any number) can sit next to an encoded pair and
+      // get mis-decoded as a letter, corrupting the round-trip.
       let out = '';
       for (const ch of code) {
         const up = ch.toUpperCase();
         if (/[a-zA-Z]/.test(ch) && up === 'J') out += (ch === ch.toLowerCase() ? '6' : '') + '70';
         else if (/[a-zA-Z]/.test(ch) && map[up]) out += (ch === ch.toLowerCase() ? '6' : '') + map[up];
-        else out += ch;
+        else out += '0' + ch;
       }
+      // Decode indexes by UTF-16 code unit (s[i]), but an escaped passthrough
+      // character can be an astral code point (e.g. emoji) spanning TWO code
+      // units as a surrogate pair. Use codePointAt to read the whole
+      // character and advance by its actual UTF-16 width (1 or 2), or the
+      // low surrogate half is left dangling and corrupts/crashes decode.
       return `(function(){const sq=${jstr(sq)};const s=${jstr(out)};let r='';let i=0;` +
-        `while(i<s.length){let lower=false;` +
-        `if(s[i]==='6'&&i+2<s.length&&/\\d/.test(s[i+1])&&/\\d/.test(s[i+2])){lower=true;i++;}` +
-        `if(s[i]==='7'&&i+1<s.length&&s[i+1]==='0'){r+=lower?'j':'J';i+=2;}` +
-        `else if(/\\d/.test(s[i])&&i+1<s.length&&/\\d/.test(s[i+1])&&s[i]>='1'&&s[i]<='5'&&s[i+1]>='1'&&s[i+1]<='5'){` +
-        `const row=sq[+s[i]-1];const ch=row[+s[i+1]-1];r+=lower?ch.toLowerCase():ch;i+=2;}` +
-        `else{r+=s[i];i++;}}eval(r);})();\n`;
+        `while(i<s.length){` +
+        `if(s[i]==='0'){const ch=String.fromCodePoint(s.codePointAt(i+1));r+=ch;i+=1+ch.length;continue;}` +
+        `let lower=false;if(s[i]==='6'){lower=true;i++;}` +
+        `if(s[i]==='7'&&s[i+1]==='0'){r+=lower?'j':'J';i+=2;}` +
+        `else{const row=sq[+s[i]-1];const ch=row[+s[i+1]-1];r+=lower?ch.toLowerCase():ch;i+=2;}}` +
+        `eval(r);})();\n`;
     },
   },
   rot13: {
@@ -293,7 +325,11 @@ const METHODS = {
   },
   reverse: {
     description: 'Reverse entire code',
-    apply: (code) => `eval(${jstr(Array.from(code).reverse().join(''))}.split('').reverse().join(''));\n`,
+    // `.split('').reverse()` splits by UTF-16 code unit, not code point, so
+    // it tears astral characters (most emoji) in half and corrupts them on
+    // re-reversal. `[...str]` (like Array.from) iterates by code point, so
+    // reversal round-trips correctly for any character.
+    apply: (code) => `eval([...${jstr(Array.from(code).reverse().join(''))}].reverse().join(''));\n`,
   },
   whitespace: {
     description: 'Whitespace (space/tab) binary encoding',
@@ -309,6 +345,9 @@ const METHODS = {
     description: 'Split code into chunks and reassemble',
     apply: (code, opts) => {
       const size = opts.chunkSize || 50;
+      if (!Number.isInteger(size) || size <= 0) {
+        throw new Error(`split: chunk size must be a positive integer, got ${size}`);
+      }
       const chunks = [];
       for (let i = 0; i < code.length; i += size) chunks.push(code.slice(i, i + size));
       const enc = chunks.map((c) => b64(Buffer.from(c, 'utf8')));

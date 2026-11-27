@@ -249,6 +249,8 @@ class SplitMethod(ObfuscationMethod):
     @staticmethod
     def apply(code, **kwargs):
         chunk_size = kwargs.get('chunk_size', 50)
+        if not isinstance(chunk_size, int) or chunk_size <= 0:
+            raise ValueError(f"split: chunk_size must be a positive integer, got {chunk_size!r}")
         chunks = [code[i:i+chunk_size] for i in range(0, len(code), chunk_size)]
         encoded = [base64.b64encode(c.encode()).decode() for c in chunks]
         return f'''import base64
@@ -377,14 +379,14 @@ class VigenereMethod(ObfuscationMethod):
     @staticmethod
     def apply(code, **kwargs):
         keyword = kwargs.get('key')
-        if keyword is None:
+        if isinstance(keyword, bytes):
+            keyword = keyword.decode('latin1')
+        elif not isinstance(keyword, str):
+            keyword = None
+        if not keyword:  # None, or empty after the normalization above
             keyword = ''.join(random.choices(string.ascii_uppercase, k=8))
             print(Fore.YELLOW + f"[!] Generated random Vigenère keyword: {keyword}")
             _record_key("Vigenere keyword", keyword)
-        elif isinstance(keyword, bytes):
-            keyword = keyword.decode('latin1')
-        elif not isinstance(keyword, str):
-            keyword = ''.join(random.choices(string.ascii_uppercase, k=8))
         
         keyword = keyword.upper()
         encoded = []
@@ -424,12 +426,14 @@ class RC4Method(ObfuscationMethod):
     @staticmethod
     def apply(code, **kwargs):
         key = kwargs.get('key')
-        if key is None:
+        if not key:  # None or empty string/bytes -> no usable key, generate one
             key_bytes = bytes([random.randint(0,255) for _ in range(16)])
             print(Fore.YELLOW + f"[!] Generated random RC4 key (base64): {base64.b64encode(key_bytes).decode()}")
             _record_key("RC4 key (base64)", base64.b64encode(key_bytes).decode())
         elif isinstance(key, str):
-            key_bytes = key.encode('latin1')
+            # utf-8, not latin1: latin1 can't encode most unicode passphrases
+            # (e.g. Cyrillic/CJK/emoji) and would raise UnicodeEncodeError.
+            key_bytes = key.encode('utf-8')
         else:
             key_bytes = key
         
@@ -493,18 +497,24 @@ class PolybiusMethod(ObfuscationMethod):
                 if ch == 'I':
                     encode_map['J'] = f"{r+1}{c+1}"
         # Case-preserving: digits 1-5 index the square; a leading '6' marks a
-        # lowercase letter. Non-letters (and 'j' -> 'i') pass through literally.
-        # This round-trips real, case-sensitive Python source.
+        # lowercase letter; '70' (optionally '6'-prefixed) marks J. Every other
+        # character -- including a literal digit, or a literal '0'/'6'/'7' --
+        # is escaped as '0' + the raw character itself. Without this escape, a
+        # literal digit in the source (e.g. any two-digit number, or just the
+        # digits in "\U0001F600") can land next to an encoded pair and get
+        # mis-decoded as a letter, corrupting the round-trip. '0' is never the
+        # first digit of a real pair (rows/cols are 1-5), so it is a safe,
+        # unambiguous escape marker.
         encoded = []
         for ch in code:
             up = ch.upper()
             if ch.isalpha() and up == 'J':
                 encoded.append(('6' if ch.islower() else '') + '70')  # J escape
-            elif up in encode_map and ch.isalpha():
+            elif ch.isalpha() and up in encode_map:
                 prefix = '6' if ch.islower() else ''
                 encoded.append(prefix + encode_map[up])
             else:
-                encoded.append(ch)
+                encoded.append('0' + ch)  # escaped literal passthrough
         encoded_str = ''.join(encoded)
         return f'''def _polybius_decode(s):
     square = [['A','B','C','D','E'],
@@ -515,23 +525,23 @@ class PolybiusMethod(ObfuscationMethod):
     res = []
     i = 0
     while i < len(s):
+        if s[i] == '0':
+            res.append(s[i+1])
+            i += 2
+            continue
         lower = False
-        if s[i] == '6' and i+2 < len(s) and s[i+1].isdigit() and s[i+2].isdigit():
+        if s[i] == '6':
             lower = True
             i += 1
-        if s[i] == '7' and i+1 < len(s) and s[i+1] == '0':
+        if s[i] == '7' and s[i+1] == '0':
             res.append('j' if lower else 'J')
             i += 2
-        elif s[i].isdigit() and i+1 < len(s) and s[i+1].isdigit() \\
-                and '1' <= s[i] <= '5' and '1' <= s[i+1] <= '5':
+        else:
             r = int(s[i]) - 1
             c = int(s[i+1]) - 1
             ch = square[r][c]
             res.append(ch.lower() if lower else ch)
             i += 2
-        else:
-            res.append(s[i])
-            i += 1
     return ''.join(res)
 exec(compile(_polybius_decode({repr(encoded_str)}), '<string>', 'exec'))
 '''

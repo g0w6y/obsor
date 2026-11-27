@@ -16,8 +16,16 @@ public static class StrDec
 {
     public static string Decrypt(string s, byte key)
     {
-        var arr = s.ToCharArray();
-        for (int i = 0; i < arr.Length; i++) arr[i] = (char)(arr[i] ^ key);
-        return new string(arr);
+        // The encoder (Obsor.Classic/Program.cs) UTF8-encodes the original
+        // string to bytes, XORs each byte, then stores each encrypted byte
+        // as one char (0-255) in the ldstr operand. Reversing the XOR alone
+        // and returning that char array directly only happens to work for
+        // pure ASCII, where a UTF-8 byte equals its own code point: any
+        // non-ASCII literal (accents, CJK, emoji) is multi-byte in UTF-8, so
+        // skipping the final UTF-8 decode corrupted it into mojibake. We
+        // must XOR back to the original UTF-8 bytes, then decode them.
+        var bytes = new byte[s.Length];
+        for (int i = 0; i < s.Length; i++) bytes[i] = (byte)(s[i] ^ key);
+        return System.Text.Encoding.UTF8.GetString(bytes);
     }
 }
