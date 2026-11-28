@@ -656,7 +656,7 @@ def save_keys(key_data, output_base):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Advanced Python Obfuscator - Military Grade Obfuscation Available")
-    p.add_argument('-i', '--input', required=True, help="Input Python file")
+    p.add_argument('-i', '--input', help="Input Python file (not required with --list-methods)")
     p.add_argument('-o', '--output', default='obfuscated.py', help="Output file")
     p.add_argument('-m', '--methods', default='base64', help="Comma-separated methods (use --preset to override)")
     p.add_argument('--preset', choices=['military', 'max', 'light', 'stealth'], 
@@ -687,6 +687,9 @@ def main():
     show_banner()
     if args.list_methods:
         list_methods()
+        return
+    if not args.input:
+        print(Fore.RED + "[!] -i/--input is required (unless using --list-methods)")
         return
     in_path = Path(args.input)
     if not in_path.is_file():

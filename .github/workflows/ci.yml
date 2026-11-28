@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools (for native/native-logic tiers)
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Classic engine smoke test
+        run: python3 main.py --list-methods
+      - name: PRO selftest (hardened + native + native-logic)
+        run: python3 pro/selftest.py
+
+  javascript:
+    name: JavaScript / Node
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install build tools (for native/native-logic tiers)
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev
+      - name: Classic engine smoke test
+        run: node main.js --list-methods
+      - name: PRO selftest (hardened + native + native-logic)
+        run: node pro/selftest.js
+
+  dotnet:
+    name: .NET / C#
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Install build tools (for native-logic tier)
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Build
+        run: dotnet build -c Release
+      - name: Selftest (classic + cflow + hardened + native-logic)
+        run: dotnet Obsor.Selftest/bin/Release/net8.0/obsor-selftest.dll
+
+  java:
+    name: Java
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+      - name: Install build tools (for native-logic tier)
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Build
+        run: mvn -q clean package -DskipTests
+      - name: Selftest (classic + hardened + native-logic)
+        run: java -jar obsor-selftest/target/obsor-selftest-jar-with-dependencies.jar

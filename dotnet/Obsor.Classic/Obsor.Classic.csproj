@@ -7,6 +7,16 @@
     <RootNamespace>Obsor.Classic</RootNamespace>
     <AssemblyName>obsor-classic</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>obsor-classic</ToolCommandName>
+    <PackageId>Obsor.Classic</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>g0w6y</Authors>
+    <Description>IL rewriter for compiled .NET assemblies -- classic (weak, deterrent-only) tier of the Obsor obfuscation toolkit. Rewrites bytecode via Mono.Cecil (the library ConfuserEx is built on), not source text.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/g0w6y/obsor</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/g0w6y/obsor</PackageProjectUrl>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
