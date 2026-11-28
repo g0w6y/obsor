@@ -96,6 +96,7 @@ public class Main {
         }
 
         byte[] classBytes;
+        Map<Path, byte[]> companionClasses = Map.of(); // other classes javac produced from the same source: other top-level classes, static/inner/anonymous nested classes
         if (input.endsWith(".java")) {
             if (!Files.exists(Path.of(input))) {
                 System.err.println("[!] Input file not found: " + input);
@@ -103,7 +104,10 @@ public class Main {
                 return;
             }
             System.out.println("[*] Compiling " + input + " via javax.tools.JavaCompiler...");
-            classBytes = compileJava(Path.of(input));
+            JavaCompileResult compiled = compileJava(Path.of(input));
+            classBytes = compiled.classFiles.get(compiled.primaryRelPath);
+            companionClasses = new LinkedHashMap<>(compiled.classFiles);
+            companionClasses.remove(compiled.primaryRelPath);
         } else {
             if (!Files.exists(Path.of(input))) {
                 System.err.println("[!] Input file not found: " + input);
@@ -118,9 +122,27 @@ public class Main {
         reader.accept(cn, 0);
 
         int renamed = 0, stringsEnc = 0;
+        String origClassName = cn.name; // renaming members never changes cn.name itself; captured for clarity at the companion-patching call below
 
         if (methods.contains("rename")) {
-            renamed = applyRename(cn);
+            RenameResult rr = applyRename(cn);
+            renamed = rr.count();
+
+            // Patch any companion classes (other top-level classes, static/
+            // inner/anonymous nested classes from the same source) that
+            // reference cn's just-renamed private members via nestmate
+            // access -- see patchCallSites' javadoc.
+            for (var entry : companionClasses.entrySet()) {
+                ClassReader cReader = new ClassReader(entry.getValue());
+                ClassNode companionCn = new ClassNode();
+                cReader.accept(companionCn, 0);
+                boolean changed = patchCallSites(companionCn, origClassName, rr.fieldRenames(), rr.methodRenames());
+                if (changed) {
+                    ClassWriter cWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
+                    companionCn.accept(cWriter);
+                    entry.setValue(cWriter.toByteArray());
+                }
+            }
         }
         if (methods.contains("strenc")) {
             stringsEnc = applyStrEnc(cn, key);
@@ -130,10 +152,24 @@ public class Main {
         cn.accept(writer);
         byte[] outBytes = writer.toByteArray();
 
-        Path outDir = Path.of(output);
-        Path classPath = outDir.resolve(cn.name + ".class"); // cn.name uses '/' for package separators
+        Path outDir = Path.of(output).toAbsolutePath().normalize();
+        Path classPath = resolveWithinOutDir(outDir, cn.name + ".class"); // cn.name uses '/' for package separators
         Files.createDirectories(classPath.getParent());
         Files.write(classPath, outBytes);
+
+        // Any OTHER classes javac produced from the same .java source --
+        // other top-level classes, static/inner/anonymous nested classes --
+        // are out of scope for rename/strenc (same single-class scope as
+        // feeding a pre-compiled .class file directly), but still MUST ship
+        // alongside the rewritten primary class unmodified, or the output
+        // is simply broken the moment the primary class references them
+        // (NoClassDefFoundError at runtime, even though the tool reported
+        // success).
+        for (var entry : companionClasses.entrySet()) {
+            Path dest = resolveWithinOutDir(outDir, entry.getKey().toString());
+            Files.createDirectories(dest.getParent());
+            Files.write(dest, entry.getValue());
+        }
 
         // Ship the runtime helper jar alongside, same pattern as the .NET port's Obsor.Runtime.dll.
         if (methods.contains("strenc")) {
@@ -156,6 +192,28 @@ public class Main {
         }
     }
 
+    /**
+     * Resolve {@code relName} under {@code outDir} and refuse to return
+     * anything outside it. This class's own name (the ASM {@code this_class}
+     * constant-pool entry, `cn.name`) is used directly to build the output
+     * path -- and when `-i` is a raw `.class` file (not compiled by javac
+     * from `.java` source), ASM's ClassReader/ClassWriter enforce NO rule
+     * that this name looks like a normal package/class path. Demonstrated
+     * directly during security review: a hand-built .class file with
+     * this_class = "../../../../../../tmp/evil/pwned" (or even an
+     * absolute-looking name, since Path.resolve() on an absolute argument
+     * discards the base entirely) made this tool write its obfuscated
+     * output wherever the attacker chose, fully outside -o. A build service
+     * that obfuscates untrusted uploaded .class files with a fixed -o would
+     * hand an uploader arbitrary-file-write on the host.
+     */
+    private static Path resolveWithinOutDir(Path outDir, String relName) {
+        Path resolved = outDir.resolve(relName).normalize();
+        if (!resolved.startsWith(outDir))
+            throw new IllegalArgumentException("refusing to write outside output directory: " + relName);
+        return resolved;
+    }
+
     private static Path findRuntimeJar() {
         Path jarDir = Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent();
         if (jarDir == null) return null;
@@ -168,23 +226,74 @@ public class Main {
         }
     }
 
-    private static byte[] compileJava(Path javaFile) throws IOException {
+    /** All .class files javac produced for one source, plus which one is "the" primary class to rewrite. */
+    private record JavaCompileResult(Map<Path, byte[]> classFiles, Path primaryRelPath) {}
+
+    private static JavaCompileResult compileJava(Path javaFile) throws IOException {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new IllegalStateException("No system Java compiler available (need a JDK, not just a JRE)");
         Path workDir = Files.createTempDirectory("obsor_classic_");
-        int rc = compiler.run(null, null, null, javaFile.toString(), "-d", workDir.toString());
-        if (rc != 0) throw new IllegalStateException("javac compilation failed (exit " + rc + ")");
-        try (var stream = Files.walk(workDir)) {
-            Path classFile = stream.filter(p -> p.toString().endsWith(".class")
-                            && !p.getFileName().toString().contains("$"))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("javac produced no top-level .class file"));
-            return Files.readAllBytes(classFile);
+        try {
+            return compileJavaInto(compiler, javaFile, workDir);
+        } finally {
+            // javac's own scratch output dir is fully read into memory below
+            // and never needed again after this call returns -- without this,
+            // every single invocation leaves its temp dir behind in the OS
+            // temp dir forever. Confirmed: ~190 stray obsor_* temp dirs had
+            // already piled up in one review session before this fix.
+            deleteRecursive(workDir);
         }
     }
 
-    /** Renames private fields/methods and fixes up all in-class call sites. Returns count renamed. */
-    private static int applyRename(ClassNode cn) {
+    private static JavaCompileResult compileJavaInto(JavaCompiler compiler, Path javaFile, Path workDir) throws IOException {
+        int rc = compiler.run(null, null, null, javaFile.toString(), "-d", workDir.toString());
+        if (rc != 0) throw new IllegalStateException("javac compilation failed (exit " + rc + ")");
+
+        // A single source file can legally produce MORE than one .class file:
+        // other package-private top-level classes declared in the same file,
+        // plus one file per static/inner/anonymous nested class (Outer$Inner
+        // .class). All of those must be captured here, not just the one we
+        // pick to actually rewrite below -- the caller ships the rest
+        // untouched alongside the rewritten primary class.
+        String expectedSimpleName = javaFile.getFileName().toString();
+        if (expectedSimpleName.endsWith(".java")) expectedSimpleName = expectedSimpleName.substring(0, expectedSimpleName.length() - 5);
+
+        Map<Path, byte[]> classFiles = new LinkedHashMap<>();
+        Path primaryRelPath = null;
+        try (var stream = Files.walk(workDir)) {
+            List<Path> all = stream.filter(p -> p.toString().endsWith(".class")).sorted().toList();
+            if (all.isEmpty()) throw new IllegalStateException("javac produced no .class files");
+            for (Path p : all) {
+                Path rel = workDir.relativize(p);
+                classFiles.put(rel, Files.readAllBytes(p));
+                String simple = rel.getFileName().toString();
+                simple = simple.substring(0, simple.length() - ".class".length());
+                // Prefer the top-level class whose simple name matches the
+                // source file's own name -- the one javac's "public class
+                // must match the file name" rule pins down unambiguously --
+                // over the previous "just take the first non-$ class we see"
+                // heuristic, which is sensitive to filesystem walk order and
+                // can silently pick an unrelated top-level class instead of
+                // the one actually meant to be the entry point.
+                if (!simple.contains("$") && simple.equals(expectedSimpleName)) {
+                    primaryRelPath = rel;
+                }
+            }
+        }
+        if (primaryRelPath == null) {
+            primaryRelPath = classFiles.keySet().stream()
+                    .filter(rel -> !rel.getFileName().toString().contains("$"))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("javac produced no top-level .class file"));
+        }
+        return new JavaCompileResult(classFiles, primaryRelPath);
+    }
+
+    /** Result of renaming cn's own private members: count, plus the rename maps needed to patch other classes. */
+    private record RenameResult(int count, Map<String, String> fieldRenames, Map<String, String> methodRenames) {}
+
+    /** Renames private fields/methods and fixes up all in-class call sites. */
+    private static RenameResult applyRename(ClassNode cn) {
         Map<String, String> fieldRenames = new HashMap<>(); // old name -> new name
         Map<String, String> methodRenames = new HashMap<>(); // "oldName descriptor" -> new name
         int count = 0;
@@ -216,18 +325,37 @@ public class Main {
         // name as a plain string, not a live reference -- renaming the
         // FieldNode/MethodNode alone does NOT update instructions that call
         // it, so every reference within this class must be patched by hand.
-        for (MethodNode m : cn.methods) {
+        patchCallSites(cn, cn.name, fieldRenames, methodRenames);
+        return new RenameResult(count, fieldRenames, methodRenames);
+    }
+
+    /**
+     * Patches FieldInsnNode/MethodInsnNode references in {@code target} that
+     * point at {@code ownerInternalName}'s renamed members. Needed for more
+     * than just a class's own methods: since Java 11 (JEP 181 nestmates),
+     * inner/nested/anonymous classes compiled from the same source access
+     * the enclosing class's private members with a direct GETFIELD/PUTFIELD/
+     * INVOKESPECIAL -- no compiler-generated synthetic bridge -- so renaming
+     * a private member of the outer class silently breaks every nested class
+     * that touches it unless those call sites are patched too.
+     * Returns true if anything was changed (caller only needs to re-serialize
+     * classes that were actually touched).
+     */
+    private static boolean patchCallSites(ClassNode target, String ownerInternalName,
+                                            Map<String, String> fieldRenames, Map<String, String> methodRenames) {
+        boolean[] changed = {false};
+        for (MethodNode m : target.methods) {
             for (AbstractInsnNode insn : m.instructions) {
-                if (insn instanceof FieldInsnNode fin && fin.owner.equals(cn.name)) {
+                if (insn instanceof FieldInsnNode fin && fin.owner.equals(ownerInternalName)) {
                     String newName = fieldRenames.get(fin.name);
-                    if (newName != null) fin.name = newName;
-                } else if (insn instanceof MethodInsnNode min && min.owner.equals(cn.name)) {
+                    if (newName != null) { fin.name = newName; changed[0] = true; }
+                } else if (insn instanceof MethodInsnNode min && min.owner.equals(ownerInternalName)) {
                     String newName = methodRenames.get(min.name + " " + min.desc);
-                    if (newName != null) min.name = newName;
+                    if (newName != null) { min.name = newName; changed[0] = true; }
                 }
             }
         }
-        return count;
+        return changed[0];
     }
 
     private static int applyStrEnc(ClassNode cn, int key) {
@@ -262,6 +390,16 @@ public class Main {
         if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) return new IntInsnNode(Opcodes.BIPUSH, value);
         if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) return new IntInsnNode(Opcodes.SIPUSH, value);
         return new LdcInsnNode(value);
+    }
+
+    /** Best-effort recursive delete of a temp directory tree -- never fails the build if cleanup itself hits an error. */
+    private static void deleteRecursive(Path root) {
+        if (!Files.exists(root)) return;
+        try (var stream = Files.walk(root)) {
+            stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+            });
+        } catch (IOException ignored) {}
     }
 
     private static String randHex(int n) {
