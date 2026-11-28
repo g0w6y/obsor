@@ -94,10 +94,17 @@ try
     var logicC = "#include <stdint.h>\nint64_t sq(int64_t x) { return x * x + 1; }\n";
     var logicOut = Path.Combine(wd, "logic_app.dll");
     LogicBuild.BuildNativeLogic(logicPayload, logicC, "obsor_native_selftest", logicOut, "pass", "CorrectPass123");
-    Check("native-logic: builds", File.Exists(logicOut) && File.Exists(Path.Combine(wd, "libobsor_native_selftest.dylib")));
+    // Extension is platform-specific (.dylib on macOS, .so on Linux, .dll on
+    // Windows -- see LogicBuild.cs's own ext logic); hardcoding .dylib here
+    // only worked on macOS and failed this exact check on Linux CI.
+    var libExt = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX) ? ".dylib"
+        : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? ".dll" : ".so";
+    var libPrefix = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? "" : "lib";
+    var nativeLibPath = Path.Combine(wd, $"{libPrefix}obsor_native_selftest{libExt}");
+    Check("native-logic: builds", File.Exists(logicOut) && File.Exists(nativeLibPath));
     var logicRun = Run(logicOut, "", "CorrectPass123");
     Check("native-logic: runs + C result", logicRun.stdout.Trim() == "R 37");
-    var dylibBytes = File.ReadAllBytes(Path.Combine(wd, "libobsor_native_selftest.dylib"));
+    var dylibBytes = File.ReadAllBytes(nativeLibPath);
     Check("native-logic: no C# source in native lib", !System.Text.Encoding.ASCII.GetString(dylibBytes).Contains("Console.WriteLine"));
 }
 catch (Exception e)
