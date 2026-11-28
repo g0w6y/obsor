@@ -259,8 +259,13 @@ internal static class Program
         if (test)
         {
             Console.WriteLine($"\n[test] Testing obfuscated assembly: {output}");
-            var psi = new System.Diagnostics.ProcessStartInfo("dotnet", $"\"{output}\"")
+            // ArgumentList (argv array), not an interpolated Arguments string --
+            // same reasoning as the fix in Obsor.Pro/Native/LogicBuild.cs: a
+            // `"` in output would otherwise close the quoted argument early
+            // and let anything after it be parsed as new argv entries.
+            var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
             { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            psi.ArgumentList.Add(output);
             using var p = System.Diagnostics.Process.Start(psi)!;
             // Drain both pipes asynchronously WHILE the process runs, not via
             // a sequential ReadToEnd() after start. Reading stdout fully

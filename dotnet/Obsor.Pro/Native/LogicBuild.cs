@@ -22,11 +22,21 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace Obsor.Pro.Native;
 
 public static class LogicBuild
 {
+    // libName becomes a filename fragment (lib<libName>.so/.dylib/.dll) via
+    // plain string concatenation, with no escaping anywhere downstream. An
+    // unrestricted libName containing "../" would let the compiled library
+    // land outside outDir (path traversal / arbitrary file write) even with
+    // the clang invocation now using a safe ArgumentList; restrict it to a
+    // plain filename-safe charset so it can never contain a path separator
+    // or traversal sequence.
+    private static readonly Regex LibNamePattern = new("^[A-Za-z0-9_.-]+$", RegexOptions.Compiled);
+
     /// <summary>
     /// Compiles nativeCSource to a shared library with clang, protects
     /// payloadSource with the hardened engine (the payload is expected to
@@ -36,11 +46,27 @@ public static class LogicBuild
     public static void BuildNativeLogic(string payloadSource, string nativeCSource, string libName,
         string outPath, string keyMode = "pass", string? passphrase = null, bool guard = false)
     {
+        if (string.IsNullOrEmpty(libName) || !LibNamePattern.IsMatch(libName))
+            throw new ArgumentException($"invalid libName: {libName!}");
+
         var outDir = Path.GetDirectoryName(Path.GetFullPath(outPath))!;
         Directory.CreateDirectory(outDir);
 
         var workdir = Path.Combine(Path.GetTempPath(), "obsor_native_" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(workdir);
+        // Directory.CreateDirectory(string) alone leaves this at the
+        // platform default (0755 on this machine, confirmed) -- world-
+        // readable. The whole point of this tool is confidentiality of the
+        // source dropped here (the developer's payload + the native
+        // crown-jewel C routine), so on a shared/multi-tenant build host any
+        // other local user could read both in plaintext while/after this
+        // runs. Restrict to owner-only, matching what Python's
+        // tempfile.mkdtemp/Node's fs.mkdtempSync/Java's
+        // Files.createTempDirectory already do by default (all confirmed
+        // 0700 during this review).
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            Directory.CreateDirectory(workdir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        else
+            Directory.CreateDirectory(workdir);
         var cPath = Path.Combine(workdir, "logic.c");
         File.WriteAllText(cPath, nativeCSource);
 
@@ -49,12 +75,30 @@ public static class LogicBuild
         string libFileName = (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "" : "lib") + libName + ext;
         var libOutPath = Path.Combine(outDir, libFileName);
 
-        var psi = new ProcessStartInfo("clang", $"-shared -O2 -fPIC -o \"{libOutPath}\" \"{cPath}\"")
+        // Use ArgumentList (a real argv array), not a single interpolated
+        // Arguments string. .NET's Process class parses a string Arguments
+        // property with its own quote-splitting rules even with
+        // UseShellExecute=false and no shell involved -- confirmed directly:
+        // a libOutPath/cPath containing a `"` closes the quoted argument
+        // early and lets everything after it be parsed as NEW argv entries
+        // (e.g. a second "-o <attacker path>", which clang honors last-wins,
+        // writing the compiled library wherever the attacker chose instead
+        // of outDir). libName has no character restrictions, so a crafted
+        // libName was enough to trigger this. ArgumentList passes each
+        // element as one argv entry with no quote-splitting, closing the
+        // vector regardless of what libName/outPath contain.
+        var psi = new ProcessStartInfo("clang")
         {
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             UseShellExecute = false,
         };
+        psi.ArgumentList.Add("-shared");
+        psi.ArgumentList.Add("-O2");
+        psi.ArgumentList.Add("-fPIC");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add(libOutPath);
+        psi.ArgumentList.Add(cPath);
         using var proc = Process.Start(psi)!;
         // Drain both pipes asynchronously WHILE the process runs, not after
         // WaitForExit(). Both streams are redirected but nothing read them

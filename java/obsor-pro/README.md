@@ -69,7 +69,7 @@ not estimated.
 | Target | Result | Rough tier |
 |---|---|---|
 | classic `rename,strenc` | one static ASM pass → every string recovered, zero execution (key is embedded) | ~2/10 |
-| PRO hardened, strong passphrase | offline brute only; Argon2id, 128 MiB / 3 iterations / parallelism 1 -- measured ~270ms per derivation on this machine, memory-hard so a GPU/ASIC attacker gets no cheap parallelism boost -> infeasible | ~6/10 |
+| PRO hardened, strong passphrase | offline brute only; Argon2id, 128 MiB / 3 iterations / parallelism 1 -- measured ~220ms per derivation on this machine (bcprov-jdk18on 1.87), memory-hard so a GPU/ASIC attacker gets no cheap parallelism boost -> infeasible | ~6/10 |
 | PRO hardened, weak passphrase | dictionary-cracked in well under a second → full recovery | ~1/10 |
 
 **Attacker can run the jar** -- a licensed customer / key-holding host (the
@@ -87,7 +87,7 @@ realistic IP-piracy threat):
   standard JVM instrumentation API, not an exotic hack. No native loader
   closes this; see "Why no middle native tier" in the root README.
 - **Argon2id parameters are a tunable choice, not a law of physics.** 128
-  MiB / 3 iterations costs ~270ms per guess on this machine -- raise
+  MiB / 3 iterations costs ~220ms per guess on this machine -- raise
   `ARGON2_MEMORY_KIB`/`ARGON2_ITERATIONS` in `KeyDerive.java` for more
   resistance at the cost of slower startup for legitimate runs too, the
   same tradeoff scrypt's `N` and .NET's Argon2id parameters have elsewhere

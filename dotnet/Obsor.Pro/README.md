@@ -54,7 +54,7 @@ OBSOR_LICENSE="TOKEN" dotnet dist/app.dll
 `Obsor.Pro.Native.LogicBuild.BuildNativeLogic(...)`. See
 `examples/NativeLogic/` for the exact call.)
 
-## Measured resistance (this machine, .NET SDK 9.0.321 / net8.0 runtime, 2026-11-27)
+## Measured resistance (this machine, .NET SDK 9.0.321 / net8.0 runtime, 2026-11-28)
 
 It all comes down to **which attacker** you have in mind. Every number below
 came from actually attacking this repo's own output, nothing was guessed.
@@ -64,8 +64,8 @@ came from actually attacking this repo's own output, nothing was guessed.
 | Target | Result | Rough tier |
 |---|---|---|
 | classic `rename,strenc` | one static Mono.Cecil pass → every string recovered, zero execution (key is embedded) | ~2/10 |
-| PRO hardened, strong passphrase | offline brute only; Argon2id, 128 MiB / 3 iterations / parallelism 1 -- measured ~520ms per derivation on this machine (~1.9 guesses/sec/core), and memory-hard so a GPU/ASIC attacker doesn't get the usual cheap parallelism boost PBKDF2 would have given them -> infeasible | ~6/10 |
-| PRO hardened, weak passphrase | dictionary-cracked in well under a second (520ms × a small dictionary) → full recovery | ~1/10 |
+| PRO hardened, strong passphrase | offline brute only; Argon2id, 128 MiB / 3 iterations / parallelism 1 -- measured ~335ms per derivation on this machine (~3 guesses/sec/core), and memory-hard so a GPU/ASIC attacker doesn't get the usual cheap parallelism boost PBKDF2 would have given them -> infeasible | ~6/10 |
+| PRO hardened, weak passphrase | dictionary-cracked in well under a second (335ms × a small dictionary) → full recovery | ~1/10 |
 
 **Attacker can run the code** -- a licensed customer / key-holding host (the
 realistic IP-piracy threat):
@@ -82,7 +82,7 @@ realistic IP-piracy threat):
   verified, not theorized. No native loader closes this; see "Why no middle
   native tier" in the root README.
 - **Key derivation cost is tunable, and the current numbers are a choice,
-  not a law of physics.** Argon2id at 128 MiB / 3 iterations costs ~520ms
+  not a law of physics.** Argon2id at 128 MiB / 3 iterations costs ~335ms
   per guess on this machine -- raise `Argon2MemoryKiB`/`Argon2Iterations`
   in `KeyDerive.cs` for more resistance at the cost of slower startup for
   legitimate runs too (same tradeoff scrypt's `N` parameter has in

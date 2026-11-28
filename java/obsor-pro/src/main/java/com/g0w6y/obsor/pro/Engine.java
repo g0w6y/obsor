@@ -49,24 +49,56 @@ public final class Engine {
     public record CompiledPayload(byte[] classBytes, String fqcn) {}
 
     public static CompiledPayload compilePayload(String source, String fallbackClassName) throws IOException {
-        String fqcn = extractPublicClassName(source).orElse(fallbackClassName);
+        // The source's own `package` declaration (if any) is independent of
+        // which simple name we guess for the public type -- javac only cares
+        // that the SOURCE FILE's name matches the public type's simple name
+        // (not the directory it lives in, when compiling an explicit file
+        // argument like we do here). But `-d` always places the resulting
+        // .class file under a package-qualified subdirectory
+        // (com/foo/Bar.class for "package com.foo;"), so the two must be
+        // tracked separately: write the source as simpleName.java at the
+        // workDir root, then look for the compiled output wherever javac
+        // actually put it.
+        String pkg = extractPackageName(source);
+        String simpleName = extractPublicClassName(source).orElse(fallbackClassName);
+        String fqcn = pkg == null ? simpleName : pkg + "." + simpleName;
+
         Path workDir = Files.createTempDirectory("obsor_pro_payload_");
-        Path srcFile = workDir.resolve(fqcn + ".java");
-        Files.writeString(srcFile, source);
+        try {
+            Path srcFile = workDir.resolve(simpleName + ".java");
+            Files.writeString(srcFile, source);
 
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        if (compiler == null) throw new IllegalStateException("No system Java compiler available (need a JDK, not just a JRE)");
-        int rc = compiler.run(null, null, null, srcFile.toString(), "-d", workDir.toString());
-        if (rc != 0) throw new IllegalStateException("payload compilation failed (exit " + rc + ")");
+            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+            if (compiler == null) throw new IllegalStateException("No system Java compiler available (need a JDK, not just a JRE)");
+            int rc = compiler.run(null, null, null, srcFile.toString(), "-d", workDir.toString());
+            if (rc != 0) throw new IllegalStateException("payload compilation failed (exit " + rc + ")");
 
-        Path classFile = workDir.resolve(fqcn + ".class");
-        if (!Files.exists(classFile)) throw new IllegalStateException("javac produced no class named " + fqcn + " -- the public class name must match the generated filename");
-        return new CompiledPayload(Files.readAllBytes(classFile), fqcn);
+            Path classFile = pkg == null ? workDir.resolve(simpleName + ".class")
+                    : workDir.resolve(pkg.replace('.', '/')).resolve(simpleName + ".class");
+            if (!Files.exists(classFile)) throw new IllegalStateException("javac produced no class named " + fqcn + " -- the public class name must match the generated filename");
+            return new CompiledPayload(Files.readAllBytes(classFile), fqcn);
+        } finally {
+            // Without this, every protect()/protectFile() call leaves its
+            // scratch compile dir behind in the OS temp dir forever --
+            // confirmed accumulating across repeated runs in review testing.
+            deleteRecursive(workDir);
+        }
     }
 
     private static java.util.Optional<String> extractPublicClassName(String source) {
-        var m = java.util.regex.Pattern.compile("public\\s+(?:final\\s+)?class\\s+(\\w+)").matcher(source);
+        // Covers interface/enum/record too, not just class -- a public type
+        // of any of those kinds still imposes the same "file name must match"
+        // rule in javac, so the simple name we guess needs to be right for
+        // all four, not just plain classes.
+        var m = java.util.regex.Pattern.compile(
+                "public\\s+(?:final\\s+|abstract\\s+|sealed\\s+|non-sealed\\s+|static\\s+)*(?:class|interface|enum|record)\\s+(\\w+)"
+        ).matcher(source);
         return m.find() ? java.util.Optional.of(m.group(1)) : java.util.Optional.empty();
+    }
+
+    private static String extractPackageName(String source) {
+        var m = java.util.regex.Pattern.compile("(?m)^\\s*package\\s+([\\w.]+)\\s*;").matcher(source);
+        return m.find() ? m.group(1) : null;
     }
 
     public static byte[] protect(String source, String keyMode, String passphrase, boolean guard, String fallbackClassName) throws Exception {
@@ -209,23 +241,39 @@ public final class Engine {
     /** Returns every .class file javac produced (named class + any anonymous/inner classes), keyed by class file name. */
     private static java.util.Map<String, byte[]> compileLauncher(String className, String source) throws IOException {
         Path workDir = Files.createTempDirectory("obsor_pro_launcher_");
-        Path srcFile = workDir.resolve(className + ".java");
-        Files.writeString(srcFile, source);
+        try {
+            Path srcFile = workDir.resolve(className + ".java");
+            Files.writeString(srcFile, source);
 
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        String classpath = System.getProperty("java.class.path");
-        int rc = compiler.run(null, null, null, "-cp", classpath, srcFile.toString(), "-d", workDir.toString());
-        if (rc != 0) throw new IllegalStateException("launcher compilation failed (exit " + rc + ")");
+            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+            String classpath = System.getProperty("java.class.path");
+            int rc = compiler.run(null, null, null, "-cp", classpath, srcFile.toString(), "-d", workDir.toString());
+            if (rc != 0) throw new IllegalStateException("launcher compilation failed (exit " + rc + ")");
 
-        java.util.Map<String, byte[]> classes = new java.util.LinkedHashMap<>();
-        try (var stream = Files.walk(workDir)) {
-            for (Path p : (Iterable<Path>) stream.filter(p -> p.toString().endsWith(".class"))::iterator) {
-                classes.put(p.getFileName().toString(), Files.readAllBytes(p));
+            java.util.Map<String, byte[]> classes = new java.util.LinkedHashMap<>();
+            try (var stream = Files.walk(workDir)) {
+                for (Path p : (Iterable<Path>) stream.filter(p -> p.toString().endsWith(".class"))::iterator) {
+                    classes.put(p.getFileName().toString(), Files.readAllBytes(p));
+                }
             }
+            if (!classes.containsKey(className + ".class"))
+                throw new IllegalStateException("javac produced no class named " + className);
+            return classes;
+        } finally {
+            // Same accumulation issue as compilePayload's workDir -- never
+            // cleaned up otherwise.
+            deleteRecursive(workDir);
         }
-        if (!classes.containsKey(className + ".class"))
-            throw new IllegalStateException("javac produced no class named " + className);
-        return classes;
+    }
+
+    /** Best-effort recursive delete of a temp directory tree -- never fails the build if cleanup itself hits an error. */
+    private static void deleteRecursive(Path root) {
+        if (!Files.exists(root)) return;
+        try (var stream = Files.walk(root)) {
+            stream.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+            });
+        } catch (IOException ignored) {}
     }
 
     private static byte[] packageJar(String launcherClassName, java.util.Map<String, byte[]> launcherClasses, byte[] payloadEnc) throws IOException {
