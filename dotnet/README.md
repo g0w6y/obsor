@@ -85,11 +85,20 @@ printed for any real run (`cflow: injected opaque predicates into N methods
 (approx basic blocks X -> Y)`).
 
 Known scope limit shared with `rename`/`strenc`, not new to `cflow`: this
-whole tool only walks `module.Types` (top-level types), so methods on
-compiler-generated nested types -- iterator (`yield`) and async state
-machines, lambda/local-function display classes -- aren't touched by any of
-the three protections. The outer method that constructs the iterator/state
-machine is still instrumented; its generated `MoveNext` is not.
+whole tool only walks `module.Types` (top-level types) and never recurses
+into `NestedTypes`, so **no nested type is touched by any of the three
+protections** -- not just compiler-generated ones (iterator (`yield`) and
+async state machines, lambda/local-function display classes), but also
+plain, hand-written nested classes a developer declares directly (e.g. a
+`class Box<T>` nested inside another class). Verified in this repo: a
+nested `class Box<T> { public Box(T v) {...} public override string
+ToString() {...} }` gets zero `cflow` instrumentation on its constructor or
+`ToString` while every top-level method in the same file is instrumented --
+confirmed by inspecting the emitted IL, not just the method count the tool
+prints. The outer method that constructs the iterator/state machine (or any
+nested type) is still instrumented; the nested type's own methods are not.
+Give any class you want protected top-level visibility if this matters to
+you.
 
 ### What classic does NOT protect against
 

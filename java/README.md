@@ -15,7 +15,8 @@ java/
 ├── obsor-classic/             # ASM-based bytecode rewriter CLI
 ├── obsor-pro/                  # PRO: hardened (javac + AES-GCM) + native-logic (JNI)
 │   └── nativelogic/              # JNI glue-code generator + build helper
-├── obsor-selftest/             # java -jar obsor-selftest.jar -- 12 checks, end to end
+├── obsor-selftest/             # java -jar obsor-selftest-jar-with-dependencies.jar -- 12 checks, end to end
+│                                 (the plain obsor-selftest.jar has no main manifest -- use the jar-with-dependencies one)
 └── examples/
     ├── sample_input.java
     ├── sample_with_private.java
@@ -79,9 +80,10 @@ Same ceiling, different mechanics:
   shipped with PBKDF2 (not memory-hard) because the .NET BCL has no scrypt,
   then had to add a NuGet package later to fix it. Java's BCL has the same
   gap, so this port pulled in BouncyCastle's pure-Java Argon2id
-  (`org.bouncycastle:bcprov-jdk18on`) from the start -- measured ~270ms per
-  derivation on this machine at the same 128 MiB/3-iteration parameters as
-  the (now-fixed) .NET tier and the Python/JS scrypt tiers.
+  (`org.bouncycastle:bcprov-jdk18on`, currently 1.87) from the start --
+  measured ~220ms per derivation on this machine at the same 128
+  MiB/3-iteration parameters as the (now-fixed) .NET tier and the
+  Python/JS scrypt tiers.
 - **The payload-loading mechanism is ClassLoader.defineClass, not
   Assembly.Load.** Conceptually the same idea (hand the runtime a byte
   array, get back a loaded, runnable unit), but Java's version has a real

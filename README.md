@@ -278,7 +278,7 @@ obsor/
 │   ├── obsor-classic/      # ASM bytecode rewriter CLI
 │   ├── obsor-pro/           # hardened (javac+AES-GCM+Argon2id) + native-logic (JNI)
 │   │   └── README.md         # PRO-Java docs + javaagent measured attack
-│   ├── obsor-selftest/      # java -jar obsor-selftest.jar
+│   ├── obsor-selftest/      # java -jar obsor-selftest-jar-with-dependencies.jar
 │   ├── examples/
 │   └── README.md          # obsor-Java docs + Java-specific wrinkles
 ├── requirements.txt
