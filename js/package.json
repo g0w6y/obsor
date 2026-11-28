@@ -16,6 +16,21 @@
   },
   "license": "Apache-2.0",
   "author": "g0w6y",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/g0w6y/obsor.git",
+    "directory": "js"
+  },
+  "homepage": "https://github.com/g0w6y/obsor/tree/main/js#readme",
+  "bugs": {
+    "url": "https://github.com/g0w6y/obsor/issues"
+  },
+  "files": [
+    "main.js",
+    "pro/",
+    "examples/",
+    "README.md"
+  ],
   "dependencies": {},
   "devDependencies": {
     "node-gyp": "^11.0.0"

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsor"
+version = "2.0.0"
+description = "Multi-layer Python obfuscation / packing toolkit, with an external-key PRO tier honestly measured against its own output"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "g0w6y" }]
+requires-python = ">=3.10"
+dependencies = [
+    "colorama>=0.4.6",
+    "pycryptodome>=3.19.1",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Build Tools",
+]
+
+[project.optional-dependencies]
+exe = ["pyinstaller>=6.3.0"]
+
+[project.urls]
+Homepage = "https://github.com/g0w6y/obsor"
+Repository = "https://github.com/g0w6y/obsor"
+Issues = "https://github.com/g0w6y/obsor/issues"
+
+[project.scripts]
+obsor = "main:main"
+obsor-pro = "pro.cli:main"
+
+# Flat-layout repo: main.py is a standalone module, pro/ is a package, and
+# js/, dotnet/, java/ are separate language ports that must NOT be picked up
+# as Python packages by setuptools' auto-discovery.
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["pro", "pro.*"]

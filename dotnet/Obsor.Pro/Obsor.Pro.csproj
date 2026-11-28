@@ -7,6 +7,16 @@
     <RootNamespace>Obsor.Pro</RootNamespace>
     <AssemblyName>obsor-pro</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>obsor-pro</ToolCommandName>
+    <PackageId>Obsor.Pro</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>g0w6y</Authors>
+    <Description>Hardened external-key PRO tier of the Obsor obfuscation toolkit: Roslyn-compiled payload, AES-256-GCM, Argon2id key derivation, honestly measured against this repo's own output.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/g0w6y/obsor</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/g0w6y/obsor</PackageProjectUrl>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
