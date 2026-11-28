@@ -2,15 +2,11 @@
 
 ## Scope
 
-- **Classic** (all 4 languages) is a documented weak deterrent, not a security boundary. Its reversibility is by design, not a bug. Don't report it.
-- **PRO** (hardened + native-logic, all 4 languages): anything that defeats the external-key boundary without the key is in scope.
-- **Build tools** (all 4 CLIs/APIs): path traversal, code/command injection via crafted input, insecure temp files, and similar are in scope.
-
-Covers all four ports: `/` (Python), `js/`, `dotnet/`, `java/`.
+This policy covers all four ports: `/` (Python), `js/`, `dotnet/`, and `java/`. Classic is a documented weak deterrent in every language, not a security boundary, so its reversibility is by design and not something to report. PRO's hardened and native-logic tiers make a real external-key-boundary claim in all four languages, so anything that defeats that boundary without the key is in scope. The build tools themselves (the CLIs and library APIs in all four ports) are also in scope for issues like path traversal, code or command injection via crafted input, and insecure temp file handling.
 
 ## Supported Versions
 
-Single rolling `main` branch. No older releases are maintained separately.
+This project has a single rolling `main` branch, and no older releases are maintained separately.
 
 ## Reporting a Vulnerability
 
